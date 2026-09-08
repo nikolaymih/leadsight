@@ -8,12 +8,14 @@ import {
   sourceConfigSchema,
   thresholdsSchema,
   VERDICTS,
-} from "@leadsight/core";
+} from "@leadsight/core/types";
 import { oc } from "@orpc/contract";
 import { z } from "zod";
 
+// The contract imports core's types entry only (`@leadsight/core/types`, Zod-only) so that the
+// web bundle never pulls in core's DB/LLM/Node code through the main barrel.
 // Re-exported so apps/web can validate forms without importing core.
-export { campaignDraftSchema, sourceConfigSchema };
+export { campaignDraftSchema, criteriaSchema, sourceConfigSchema, thresholdsSchema };
 
 // ---------------------------------------------------------------------------
 // Shared schemas (wire shapes; DB rows are mapped to these in the api layer)
