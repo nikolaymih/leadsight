@@ -18,12 +18,12 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.0",
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0"
   }
