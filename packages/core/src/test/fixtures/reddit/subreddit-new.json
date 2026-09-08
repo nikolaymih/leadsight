@@ -1,0 +1,74 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t3_1n1c0d3",
+    "dist": 4,
+    "modhash": "",
+    "geo_filter": "",
+    "children": [
+      {
+        "kind": "t3",
+        "data": {
+          "id": "1n1c0a1",
+          "name": "t3_1n1c0a1",
+          "subreddit": "startups",
+          "title": "Non-technical founder looking for a CTO to build our MVP",
+          "selftext": "I come from **hospitality** and have an idea for a booking SaaS. Haven't built anything yet.\n\nWe have a small seed round and are happy to pay a proper rate. More on our [landing page](https://example.com/booking).\n\n&amp;#x200B;\n\n> Not looking for equity-only arrangements.",
+          "author": "hosp_founder",
+          "permalink": "/r/startups/comments/1n1c0a1/nontechnical_founder_looking_for_a_cto/",
+          "url": "https://www.reddit.com/r/startups/comments/1n1c0a1/nontechnical_founder_looking_for_a_cto/",
+          "created_utc": 1757310000.0,
+          "is_self": true,
+          "over_18": false,
+          "num_comments": 12,
+          "score": 41
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "1n1c0a2",
+          "name": "t3_1n1c0a2",
+          "subreddit": "startups",
+          "title": "Our launch retrospective",
+          "selftext": "[removed]",
+          "author": "someone_else",
+          "permalink": "/r/startups/comments/1n1c0a2/our_launch_retrospective/",
+          "url": "https://www.reddit.com/r/startups/comments/1n1c0a2/our_launch_retrospective/",
+          "created_utc": 1757309000.0,
+          "is_self": true,
+          "over_18": false,
+          "num_comments": 0,
+          "score": 1
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "1n1c0a3",
+          "name": "t3_1n1c0a3",
+          "subreddit": "startups",
+          "title": "Interesting read on pricing experiments",
+          "selftext": "",
+          "author": "link_poster",
+          "permalink": "/r/startups/comments/1n1c0a3/interesting_read_on_pricing_experiments/",
+          "url": "https://blog.example.com/pricing-experiments",
+          "created_utc": 1757308000.0,
+          "is_self": false,
+          "over_18": false,
+          "num_comments": 3,
+          "score": 9
+        }
+      },
+      {
+        "kind": "t1",
+        "data": {
+          "id": "c0mm3nt",
+          "name": "t1_c0mm3nt",
+          "body": "a comment that should never be in a post listing"
+        }
+      }
+    ],
+    "before": null
+  }
+}

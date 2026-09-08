@@ -1,0 +1,52 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": null,
+    "dist": 3,
+    "children": [
+      {
+        "kind": "t3",
+        "data": {
+          "id": "1s3arch1",
+          "name": "t3_1s3arch1",
+          "subreddit": "Entrepreneur",
+          "title": "Looking for a technical cofounder for a fintech idea",
+          "selftext": "Idea stage, I handle sales and domain. Looking for someone to own the product.",
+          "author": "fin_founder",
+          "permalink": "/r/Entrepreneur/comments/1s3arch1/looking_for_a_technical_cofounder/",
+          "created_utc": 1757320000.0,
+          "is_self": true
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "1s3arch2",
+          "name": "t3_1s3arch2",
+          "subreddit": "cofounder",
+          "title": "Technical cofounder wanted — equity only",
+          "selftext": "No budget yet, equity only for now.",
+          "author": "bootstrapper",
+          "permalink": "/r/cofounder/comments/1s3arch2/technical_cofounder_wanted/",
+          "created_utc": 1757300000.0,
+          "is_self": true
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "1s3arch3",
+          "name": "t3_1s3arch3",
+          "subreddit": "startups",
+          "title": "Old post from last week",
+          "selftext": "This one is older than the cursor.",
+          "author": "old_timer",
+          "permalink": "/r/startups/comments/1s3arch3/old_post/",
+          "created_utc": 1757200000.0,
+          "is_self": true
+        }
+      }
+    ],
+    "before": null
+  }
+}
