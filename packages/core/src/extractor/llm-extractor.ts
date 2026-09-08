@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { BudgetExhaustedError, ProviderError } from "../errors.js";
 import { evidenceSchema } from "../types.js";
 import type { Budget } from "./budget.js";
+import { completeWithFallback, providerId, stripFences } from "./chain.js";
 import {
   addUsage,
   type DroppedPost,
@@ -27,8 +27,6 @@ export interface LlmExtractorOptions {
   log?: (event: string, data: Record<string, unknown>) => void;
 }
 
-const RETRY_DELAY_MS = 2_000;
-
 const envelopeSchema = z.object({
   results: z.array(z.object({ id: z.string(), evidence: z.unknown() })),
 });
@@ -41,44 +39,12 @@ interface Attempt {
 }
 
 export function createLlmExtractor(opts: LlmExtractorOptions): Extractor {
-  const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const log = opts.log ?? (() => {});
 
   async function ask(input: ExtractionInput): Promise<Attempt> {
     const request = { system: SYSTEM_PROMPT, user: buildUserPrompt(input), json: true };
-    let lastError: ProviderError | undefined;
-    let skipped = 0;
-
-    for (const provider of opts.providers) {
-      if (!(await opts.budget.canSpend(provider.name))) {
-        skipped += 1;
-        log("extract.budget_skip", { provider: provider.name });
-        continue;
-      }
-
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const response = await provider.complete(request);
-          await opts.budget.record(opts.organizationId, provider.name, provider.model, response.usage);
-          return { ...parseResponse(response.content, input), provider, usage: response.usage };
-        } catch (err) {
-          if (!(err instanceof ProviderError)) throw err;
-          // Anything not retryable is our bug (bad request, auth) — fail loudly.
-          if (!err.retryable) throw err;
-          lastError = err;
-          log("extract.provider_error", {
-            provider: provider.name,
-            attempt,
-            status: err.status,
-            message: err.message,
-          });
-          if (attempt === 0) await sleep(err.retryAfterMs ?? RETRY_DELAY_MS);
-        }
-      }
-    }
-
-    if (skipped === opts.providers.length) throw new BudgetExhaustedError(opts.providers.map((p) => p.name));
-    throw lastError ?? new ProviderError("extractor", "no providers configured");
+    const response = await completeWithFallback(request, { ...opts, scope: "extract" });
+    return { ...parseResponse(response.content, input), provider: response.provider, usage: response.usage };
   }
 
   return {
@@ -100,9 +66,9 @@ export function createLlmExtractor(opts: LlmExtractorOptions): Extractor {
         }
       }
 
-      const providerId = `${first.provider.name}/${first.provider.model}`;
-      log("extract.done", { provider: providerId, results: results.length, dropped: dropped.length, usage });
-      return { results, dropped, provider: providerId, promptVersion: PROMPT_VERSION, usage };
+      const provider = providerId(first.provider);
+      log("extract.done", { provider, results: results.length, dropped: dropped.length, usage });
+      return { results, dropped, provider, promptVersion: PROMPT_VERSION, usage };
     },
   };
 }
@@ -149,11 +115,4 @@ export function parseResponse(content: string, input: ExtractionInput): Pick<Att
     if (!seen.has(id)) invalid.set(id, "missing from response");
   }
   return { valid, invalid };
-}
-
-/** Some models wrap JSON in ```json fences even in JSON mode. */
-function stripFences(text: string): string {
-  const trimmed = text.trim();
-  const m = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  return m?.[1] ?? trimmed;
 }

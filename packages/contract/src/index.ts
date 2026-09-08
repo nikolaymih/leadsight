@@ -1,5 +1,6 @@
 import {
   CAMPAIGN_STATUSES,
+  campaignDraftSchema,
   criteriaSchema,
   evidenceSchema,
   LEAD_STATUSES,
@@ -11,8 +12,8 @@ import {
 import { oc } from "@orpc/contract";
 import { z } from "zod";
 
-// Re-exported so apps/web can validate source forms without importing core.
-export { sourceConfigSchema };
+// Re-exported so apps/web can validate forms without importing core.
+export { campaignDraftSchema, sourceConfigSchema };
 
 // ---------------------------------------------------------------------------
 // Shared schemas (wire shapes; DB rows are mapped to these in the api layer)
@@ -93,18 +94,6 @@ export const leadDetailSchema = leadSummarySchema.extend({
   notes: z.array(
     z.object({ id, userId: z.string(), userName: z.string(), body: z.string(), createdAt: isoDate }),
   ),
-});
-
-export const campaignDraftSchema = z.object({
-  name: z.string(),
-  offerDescription: z.string(),
-  icp: z.string(),
-  disqualifiers: z.array(z.string()),
-  keywords: z.array(z.string()),
-  criteria: criteriaSchema,
-  thresholds: thresholdsSchema,
-  suggestedSources: z.array(sourceConfigSchema),
-  alertQueries: z.array(z.string()),
 });
 
 export const chatMessageSchema = z.object({

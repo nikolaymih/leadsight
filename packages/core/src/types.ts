@@ -147,6 +147,26 @@ export const sourceConfigSchema = z.discriminatedUnion("kind", [
 export type SourceConfig = z.infer<typeof sourceConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// Campaign draft — what the setup chat produces and the create endpoint accepts.
+// Shared by the drafter (core), the contract and the web form.
+// ---------------------------------------------------------------------------
+
+export const campaignDraftSchema = z.object({
+  name: z.string().min(1),
+  offerDescription: z.string().min(1),
+  icp: z.string().min(1),
+  disqualifiers: z.array(z.string()),
+  keywords: z.array(z.string()),
+  criteria: criteriaSchema,
+  thresholds: thresholdsSchema,
+  suggestedSources: z.array(sourceConfigSchema),
+  /** Google Alerts query strings the user creates by hand and pastes back as rss sources. */
+  alertQueries: z.array(z.string()),
+});
+
+export type CampaignDraft = z.infer<typeof campaignDraftSchema>;
+
+// ---------------------------------------------------------------------------
 // A post as produced by a source adapter, before it is stored. Platform-agnostic.
 // ---------------------------------------------------------------------------
 

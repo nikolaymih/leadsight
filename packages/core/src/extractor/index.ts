@@ -1,4 +1,5 @@
 export * from "./budget.js";
+export * from "./chain.js";
 export * from "./extractor.js";
 export * from "./fewshot.js";
 export * from "./llm-extractor.js";
