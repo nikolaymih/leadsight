@@ -52,7 +52,7 @@ docs/               design.md, ui-brief.md
 ```
 pnpm install
 pnpm lint            biome check (format + lint)   — must pass before commit
-pnpm typecheck       tsc across workspaces         — must pass before commit
+pnpm typecheck       build packages (emits dist types), then tsc --noEmit across workspaces — must pass before commit
 pnpm test            vitest across workspaces      — must pass before commit
 pnpm db:generate     drizzle-kit generate (needs DATABASE_URL)
 pnpm db:migrate      drizzle-kit migrate
