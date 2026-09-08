@@ -115,6 +115,27 @@ packages/core/src/
 - Prompt template lives in `prompt.ts` with `PROMPT_VERSION = "2026-09-08.1"`. Bump it on
   any wording change; it's stored on every lead.
 
+## Shared provider chain
+
+`extractor/chain.ts` — `completeWithFallback(request, { providers, budget, organizationId,
+sleep?, log?, scope? })` is the one implementation of "skip over-budget providers, try in
+order, retry once on a retryable error, fail fast on ours, record usage". The extractor
+(`scope: "extract"`) and the campaign drafter (`scope: "draft"`) both use it; a new LLM
+caller must too. `providerId(p)` → `name/model`; `stripFences` for fenced JSON.
+
+## Campaign draft (`draft/`)
+
+`createCampaignDrafter({ providers, budget, organizationId, fetch, userAgent })` →
+`draft({ messages, urls })`. It fetches pasted pages (`fetch-pages.ts`: og:description +
+body text with nav/footer/script stripped, 6k chars, failures become warnings), builds
+`buildDraftPrompt` (`DRAFT_PROMPT_VERSION`), and asks for `{ reply, draft | null }` — null
+means the model needs one more answer from the user. `normalizeDraft` forgives the usual
+slips before `campaignDraftSchema` (core `types.ts`) runs: snake_case top-level keys,
+camelCase criterion keys, weights that don't sum to 100 (rescaled, remainder on the
+heaviest), enum options without points (0) or over the weight (capped). An invalid draft is
+re-asked once with the issues; a second failure throws a non-retryable `ProviderError`
+(→ `BAD_GATEWAY`). Tested in `draft/campaign-draft.test.ts` with `test/fake-provider.ts`.
+
 ## Few-shot
 
 - `fewshot.ts`: load up to `campaign.fewshotLimit` most recent labels for the campaign,

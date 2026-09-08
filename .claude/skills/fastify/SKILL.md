@@ -18,12 +18,11 @@ apps/api/src/
     db.ts             decorates app.db (drizzle client), closes the pool on app.close
     auth.ts           decorates app.auth, mounts /api/auth/* in an encapsulated scope with a raw-string body parser
     orpc.ts           RPCHandler from @orpc/server/fastify, mounts /rpc/*
-    pipeline.ts       builds core's PipelineDeps from env once (registry, providers, budget), decorates app.pipeline
+    pipeline.ts       builds core's PipelineDeps from env once (registry, providers, budget, extractorFor, drafterFor), decorates app.pipeline
     scheduler.ts      one node-cron job → runPipeline(app.pipeline); createTick() mutex; started on ready, stopped on close
   orpc/
     context.ts        Context type, buildContext(request, { db, auth }), requireOrg middleware
     implementer.ts    os = implement(contract).$context<Context>(); authed = os.use(requireOrg)
-    not-implemented.ts  handler that throws ORPCError("NOT_IMPLEMENTED") — the stub for unbuilt procedures
     error-map.ts      core errors → ORPCError                                      (step 2)
     router.ts         os.router({ campaigns, sources, leads, runs }); fails to compile if a procedure is missing
     procedures/       one file per contract group, each exporting the group object

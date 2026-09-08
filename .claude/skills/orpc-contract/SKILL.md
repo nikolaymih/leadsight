@@ -33,8 +33,9 @@ The server implements it, the web app consumes it, both are type-checked against
    };
    ```
    Each group file exports one object; `router.ts` does `os.router({ campaigns, sources, leads, runs })`.
-   The compiler fails if a contract procedure has no implementation. Until a procedure is
-   built, its handler is `notImplemented` from `orpc/not-implemented.ts` (responds 501).
+   The compiler fails if a contract procedure has no implementation. If you must ship a
+   contract procedure before its implementation, give it a handler that throws
+   `new ORPCError("NOT_IMPLEMENTED")` and say so in CLAUDE.md's next steps.
 3. **Consume** (`apps/web`): `orpc.campaigns.remove.mutationOptions()` via TanStack Query
    (see the `tanstack` skill). Types flow from the contract; no manual typing.
 

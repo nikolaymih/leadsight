@@ -39,9 +39,9 @@ in the same PR so the next task inherits it.
 ## Layout
 
 ```
-packages/core       domain: types (Zod), Drizzle schema, rules engine, sources, extractor, notifiers, pipeline. No framework deps.
+packages/core       domain: types (Zod), Drizzle schema, db queries, rules, sources, extractor, draft, scoring, pipeline, notifier contract. No framework deps.
 packages/contract   oRPC contract: Zod wire schemas + routes. Consumed by api and web.
-apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (complete except campaigns.draft)
+apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (complete)
 apps/web            Next.js 15 App Router dashboard.                                  (not started)
 docs/               design.md, ui-brief.md
 .claude/skills/     conventions per area (see router above)
@@ -112,7 +112,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 4. ~~Extractor: providers, budget, few-shot, `LlmExtractor` with fake-provider tests. Prompt v1.~~ Done — `packages/core/src/extractor/`, `PROMPT_VERSION = "2026-09-08.1"`.
 5. ~~Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.~~ Done — `packages/core/src/pipeline/`, `apps/api/src/plugins/{pipeline,scheduler}.ts`.
 6. ~~oRPC procedures for campaigns, sources, leads, runs (real implementations).~~ Done — `apps/api/src/orpc/{context,error-map,mappers}.ts`, `procedures/*`; only `campaigns.draft` is still a stub.
-7. Campaign draft endpoint (LLM-generated draft from chat + URLs).
+7. ~~Campaign draft endpoint (LLM-generated draft from chat + URLs).~~ Done — `packages/core/src/draft/`, `extractor/chain.ts` shared with the extractor, `campaigns.draft`.
 8. `apps/web`: shell, auth screens, inbox, lead panel, campaign setup chat, sources & runs, settings — per `docs/ui-brief.md`.
 9. Notifiers (Slack, email digest).
 10. Deploy: Dockerfiles for api and web, compose for the hosting machine, migration step.

@@ -449,6 +449,14 @@ its sources. `alert_queries` are shown as copy-to-clipboard strings; the user
 creates the Google Alerts manually and pastes the feed URLs back as `rss`
 sources.
 
+Implementation notes: the wire shape is camelCase (`campaignDraftSchema`, owned
+by core and re-exported by the contract); the example above shows the fields.
+The endpoint returns `{ reply, draft }` where `draft` is `null` when the model
+still needs one answer from the user (the `reply` is then the question). Model
+output is normalised before validation (key casing, weights rescaled to 100,
+enum points capped) and re-asked once with the validation issues; the same
+provider chain and token budget as extraction apply. Admin role required.
+
 ## 6. Extraction prompt (template)
 
 System: you are extracting evidence from public posts to judge fit with an
