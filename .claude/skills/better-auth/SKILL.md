@@ -5,8 +5,13 @@ description: How authentication and organizations work in LeadSight using Better
 
 # Better Auth
 
-Server config: `apps/api/src/auth.ts`. Client: `apps/web/src/lib/auth-client.ts`.
+Server config: `apps/api/src/auth.ts` exports `createAuth({ env, db })`; the Fastify auth
+plugin calls it and decorates `app.auth`. Client: `apps/web/src/lib/auth-client.ts`.
 Tables: `packages/core/src/schema/auth.ts` (Drizzle), shared migration stream.
+
+Better Auth requires `drizzle-orm >= 0.45.2` (its adapter's peer range); the workspace is
+pinned accordingly. It also brings its own nested zod 4 — that is why `apps/api` builds
+with `declaration: false`.
 
 ## Server config
 
@@ -55,11 +60,23 @@ export const auth = betterAuth({
 
 ```ts
 // orpc/context.ts
-const session = await auth.api.getSession({ headers: toWebHeaders(request.headers) });
+const session = await auth.api.getSession({
+  headers: toWebHeaders(request.headers),
+  query: { disableCookieCache: true },
+});
 return { db, logger, session, orgId: session?.session.activeOrganizationId ?? null };
 ```
 
 Better Auth exposes `auth.api.*` for server-side calls; use it instead of HTTP round-trips.
+
+**`disableCookieCache` is not optional.** `session.cookieCache` is on (5 min) so the web
+app's `useSession` is cheap, but the cached cookie is only refreshed by `set-active`, not by
+`organization.create`, member removal, or an org switch in another tab. `orgId` is the
+tenant boundary, so the API reads it from the database on every request. Removing that
+flag re-introduces cross-tenant reads for up to five minutes.
+
+In the web app, call `authClient.organization.setActive({ organizationId })` right after
+creating an organization so the UI's cached session catches up immediately.
 
 ## Client (web)
 

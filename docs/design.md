@@ -480,8 +480,13 @@ All routes scoped by the active organization from the session.
 ## 8. Open decisions
 
 - ORM: **Drizzle** (decided). Schema in TS, `drizzle-kit generate` for
-  migrations committed to git, `migrate()` at service startup; `push` only for
-  local iteration. Better Auth tables emitted via its CLI into the same schema.
+  migrations committed to git, applied with `drizzle-kit migrate` as a deploy
+  step — never at service boot, so a bad migration cannot take the API down
+  mid-rollout; `push` only for local iteration. Better Auth tables emitted via
+  its CLI into the same schema.
+- Session cookie cache: enabled for the web app, but the API always reads the
+  session from the database when building the request context. The active
+  organization is the tenant boundary and must never be served stale.
 - Scheduler: node-cron in-process for v1; move to BullMQ when a second worker
   is needed.
 - Keyword pre-filter on RSS: skip entirely (feeds are already keyword-scoped)

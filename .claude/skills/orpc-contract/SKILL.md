@@ -22,14 +22,19 @@ The server implements it, the web app consumes it, both are type-checked against
    schemas at the top of the file; don't inline duplicate object shapes.
 2. **Implement** (`apps/api/src/orpc/procedures/<group>.ts`):
    ```ts
-   export const remove = implement(contract.campaigns.remove)
-     .use(requireOrg)
-     .handler(async ({ input, context }) => {
+   import { authed } from "../implementer.js"; // implement(contract).$context<Context>().use(requireOrg)
+
+   export const campaigns = {
+     // ...
+     remove: authed.campaigns.remove.handler(async ({ input, context }) => {
        await deleteCampaign(context.db, context.orgId, input.id); // core function
        return { ok: true as const };
-     });
+     }),
+   };
    ```
-   Wire it in `router.ts`. The compiler fails if a contract procedure has no implementation.
+   Each group file exports one object; `router.ts` does `os.router({ campaigns, sources, leads, runs })`.
+   The compiler fails if a contract procedure has no implementation. Until a procedure is
+   built, its handler is `notImplemented` from `orpc/not-implemented.ts` (responds 501).
 3. **Consume** (`apps/web`): `orpc.campaigns.remove.mutationOptions()` via TanStack Query
    (see the `tanstack` skill). Types flow from the contract; no manual typing.
 

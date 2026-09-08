@@ -9,22 +9,32 @@ description: How to build and extend the LeadSight API server in apps/api with F
 
 ```
 apps/api/src/
-  env.ts              Zod-validated env, the only place that reads process.env
-  server.ts           entry: build app, listen, handle SIGTERM
-  app.ts              buildApp(): registers plugins in order, returns FastifyInstance
+  env.ts              Zod-validated env, the only place that reads process.env; loadEnv(source?)
+  server.ts           entry: loadEnv, buildApp, listen, SIGTERM/SIGINT with a 10s deadline
+  app.ts              buildApp(env): registers plugins in order, returns the FastifyInstance
+  auth.ts             createAuth({ env, db }) → Better Auth instance (explicit deps, no singleton)
+  http.ts             Node ⇄ web conversions (toWebHeaders, toWebRequest) for Better Auth
   plugins/
-    db.ts             decorates app.db (drizzle client), closes on app.close
-    auth.ts           Better Auth instance, mounts /api/auth/*, decorates request.session
+    db.ts             decorates app.db (drizzle client), closes the pool on app.close
+    auth.ts           decorates app.auth, mounts /api/auth/* in an encapsulated scope with a raw-string body parser
     orpc.ts           RPCHandler from @orpc/server/fastify, mounts /rpc/*
-    scheduler.ts      node-cron jobs, started on ready, stopped on close
+    scheduler.ts      node-cron jobs, started on ready, stopped on close           (step 5)
   orpc/
-    context.ts        builds the oRPC context from request (session, org, db, logger)
-    error-map.ts      core errors → ORPCError
-    router.ts         implement(contract) with all procedures wired
-    procedures/       one file per contract group: campaigns.ts, sources.ts, leads.ts, runs.ts
+    context.ts        Context type, buildContext(request, { db, auth }), requireOrg middleware
+    implementer.ts    os = implement(contract).$context<Context>(); authed = os.use(requireOrg)
+    not-implemented.ts  handler that throws ORPCError("NOT_IMPLEMENTED") — the stub for unbuilt procedures
+    error-map.ts      core errors → ORPCError                                      (step 2)
+    router.ts         os.router({ campaigns, sources, leads, runs }); fails to compile if a procedure is missing
+    procedures/       one file per contract group, each exporting the group object
   routes/
     health.ts         GET /healthz (plain Fastify route; no auth)
+  test/
+    helpers.ts        buildTestApp, signUp, createOrganization, rpcClient (typed oRPC client over app.inject)
 ```
+
+`tsconfig.json` sets `declaration: false`: this is an app, nobody consumes its types, and
+Better Auth's inferred types reference its own nested zod, which is not nameable from
+declaration output (TS2742).
 
 ## Rules
 
@@ -102,7 +112,15 @@ add `OpenAPIHandler` from `@orpc/openapi/fastify` on `/api/*` — the contract a
 
 ## Testing the API
 
-- `app.inject()` for route tests; build the app with a test DB URL.
+- `buildTestApp()` from `src/test/helpers.ts` builds the app against `DATABASE_URL`
+  (default: the docker-compose instance) with a silent logger. Migrations must already be
+  applied; tests never run them.
+- `app.inject()` for plain routes. For oRPC, use `rpcClient(app, jar)` — the real typed
+  `@orpc/client` with `fetch` routed through `app.inject`, so tests exercise the same
+  protocol the web app uses. Assert on `error.code` (`UNAUTHORIZED`, `FORBIDDEN`, …).
+- `signUp(app)` and `createOrganization(app, jar)` mint real Better Auth sessions and
+  carry cookies in a small jar. Don't mock Better Auth.
+- Test files run serially (`fileParallelism: false`) because they share one database.
 - For oRPC procedures, prefer testing the core function they call. Test the procedure
   only for auth/mapping behavior.
 

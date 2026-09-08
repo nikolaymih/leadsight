@@ -41,7 +41,7 @@ in the same PR so the next task inherits it.
 ```
 packages/core       domain: types (Zod), Drizzle schema, rules engine, sources, extractor, notifiers, pipeline. No framework deps.
 packages/contract   oRPC contract: Zod wire schemas + routes. Consumed by api and web.
-apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (not started)
+apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (skeleton: boot, db, auth, stub router, healthz; no scheduler yet)
 apps/web            Next.js 15 App Router dashboard.                                  (not started)
 docs/               design.md, ui-brief.md
 .claude/skills/     conventions per area (see router above)
@@ -54,9 +54,10 @@ pnpm install
 pnpm lint            biome check (format + lint)   — must pass before commit
 pnpm typecheck       build packages (emits dist types), then tsc --noEmit across workspaces — must pass before commit
 pnpm test            vitest across workspaces      — must pass before commit
+                     apps/api tests hit a real Postgres: `docker compose up db && pnpm db:migrate` first
 pnpm db:generate     drizzle-kit generate (needs DATABASE_URL)
-pnpm db:migrate      drizzle-kit migrate
-pnpm dev:api         tsx watch apps/api            (once apps/api exists)
+pnpm db:migrate      drizzle-kit migrate (needs DATABASE_URL)
+pnpm dev:api         tsx watch apps/api            (reads the root .env — copy .env.example)
 pnpm dev:web         next dev                      (once apps/web exists)
 docker compose up db local Postgres 17
 ```
@@ -104,7 +105,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 
 ## Next steps (in order — update this list as you complete items)
 
-1. `apps/api` skeleton: env.ts, app.ts, server.ts, db plugin, Better Auth plugin, oRPC plugin with a stub router, health route. `docker-compose.yml`. First migration generated and applied.
+1. ~~`apps/api` skeleton: env.ts, app.ts, server.ts, db plugin, Better Auth plugin, oRPC plugin with a stub router, health route. `docker-compose.yml`. First migration generated and applied.~~ Done — `apps/api/src`, `packages/core/drizzle/0000_init.sql`.
 2. `packages/core/src/errors.ts`, `db/` query module, `test/db.ts` (`withTestDb`) and seed helpers.
 3. Sources: interface, registry, `RedditSubredditSource`, `RedditSearchSource`, `RssSource`, hydrators. Fixture-based tests.
 4. Extractor: providers, budget, few-shot, `LlmExtractor` with fake-provider tests. Prompt v1.
