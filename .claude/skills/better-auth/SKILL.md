@@ -97,8 +97,10 @@ export const authClient = createAuthClient({
   so the browser cookie is forwarded.
 - Org switcher: `authClient.organization.setActive({ organizationId })`, then
   `queryClient.invalidateQueries()` (everything is tenant-scoped).
-- Screens: use `@daveyplate/better-auth-ui` components for login/signup/settings/org
-  management to avoid hand-building forms; theme them with the app's shadcn tokens.
+- Screens: hand-built forms over `authClient` (`apps/web/src/components/auth/*`). We
+  decided against `@daveyplate/better-auth-ui` (2026-09-08): its peer list pulls in passkey,
+  captcha, InstantDB and react-email packages we don't use. Revisit only if the auth surface
+  grows well beyond login/signup/reset/invite.
 
 ## Cookies and CORS
 
@@ -112,9 +114,16 @@ export const authClient = createAuthClient({
 
 ## Email
 
-- Invitations and password resets need an email sender. Configure `sendInvitationEmail`
-  and `emailAndPassword.sendResetPassword` with the same `nodemailer` transport the
-  notifier uses. In dev, log the link instead of sending.
+- Invitations and password resets go through the `Mailer` interface in `apps/api/src/mailer.ts`
+  (`send({ to, subject, text })`). `createAuth` wires it into `sendResetPassword` and
+  `sendInvitationEmail`; the auth plugin currently passes `createLogMailer`, which logs the
+  email instead of delivering it. Step 9 adds the nodemailer transport behind the same
+  interface — don't call nodemailer from `auth.ts` directly.
+- Invitation links point at the web app (`${WEB_ORIGIN}/invite/<id>`), which calls
+  `organization.acceptInvitation`. Reset links come from Better Auth; the web app requests
+  them with an absolute `redirectTo` (`<web origin>/reset-password`) and that page calls
+  `resetPassword({ newPassword, token })`. A relative `redirectTo` would resolve against
+  the API origin.
 
 ## Testing
 

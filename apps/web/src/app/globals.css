@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+/* Dark mode follows the OS until preferences live server-side (no browser storage for app state). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+
+  /* Verdicts — the only place these colours are defined. VerdictBadge consumes them. */
+  --color-verdict-hot: var(--verdict-hot);
+  --color-verdict-warm: var(--verdict-warm);
+  --color-verdict-cold: var(--verdict-cold);
+  --color-verdict-insufficient: var(--verdict-insufficient);
+  --color-verdict-disqualified: var(--verdict-disqualified);
+
+  --radius: 6px;
+}
+
+:root {
+  --background: #fafafa;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #4f46e5;
+  --accent: #4f46e5;
+  --accent-foreground: #ffffff;
+  --destructive: #b91c1c;
+
+  --verdict-hot: #c2410c;
+  --verdict-warm: #b45309;
+  --verdict-cold: #1d4ed8;
+  --verdict-insufficient: #6b7280;
+  --verdict-disqualified: #9f1239;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b0b0d;
+    --foreground: #e4e4e7;
+    --card: #131316;
+    --muted: #1c1c21;
+    --muted-foreground: #a1a1aa;
+    --border: #27272a;
+    --input: #27272a;
+    --ring: #818cf8;
+    --accent: #6366f1;
+    --accent-foreground: #ffffff;
+    --destructive: #f87171;
+
+    --verdict-hot: #fb923c;
+    --verdict-warm: #fbbf24;
+    --verdict-cold: #60a5fa;
+    --verdict-insufficient: #9ca3af;
+    --verdict-disqualified: #fb7185;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-background text-foreground font-sans text-sm antialiased;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+}
+
+/* Dense-table helpers */
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}

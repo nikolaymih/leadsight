@@ -5,10 +5,11 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r build && pnpm -r typecheck",
+    "typecheck": "pnpm -r --filter \"./packages/*\" build && pnpm -r typecheck",
     "db:generate": "pnpm --filter @leadsight/core db:generate",
     "db:migrate": "pnpm --filter @leadsight/core db:migrate",
     "dev:api": "pnpm --filter @leadsight/api dev",
+    "dev:web": "pnpm --filter @leadsight/web dev",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."
