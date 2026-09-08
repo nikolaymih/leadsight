@@ -71,9 +71,12 @@ packages/core/src/
 
 - Insert posts with `onConflictDoNothing` on `(organization_id, platform, external_id)`.
   Then link `post_sources`. A post seen by three sources is one row.
-- Pre-filter (`prefilter.ts`): a post is a scoring candidate for a campaign if the source
-  is keyword-scoped (`reddit_search`, `rss`) or the text contains any campaign keyword
-  (case-insensitive, word-boundary). Keep it a pure function with tests.
+- Pre-filter (`pipeline/prefilter.ts`): a post is a scoring candidate for a campaign if
+  the source is keyword-scoped (`reddit_search`, `rss`) or title+body contains any campaign
+  keyword (case-insensitive substring; `escapeLike` keeps `%`/`_` literal). It runs **inside
+  the candidate query** (`findExtractionCandidates` → `candidateCondition`) so filtered
+  posts never occupy the oldest-first batch window; `isCandidate` is the same rule in TS,
+  kept for tests. Change both together.
 
 ## Extractor
 
@@ -133,13 +136,33 @@ packages/core/src/
 
 ## Pipeline run
 
-`pipeline/run.ts` exports `runPipeline({ db, logger, registry, extractor, notifiers, now })`.
-Steps in order, each returning counts, each wrapped so a failure is recorded and the next
-step still runs on whatever succeeded:
+`pipeline/run.ts` exports `runPipeline(deps: PipelineDeps)` with
+`{ db, registry, extractorFor(orgId), notifiers, logger, now?, sourceIds?, maxCandidatesPerCampaign? }`.
+`extractorFor` exists because budget usage events are recorded per organization.
+`sourceIds` makes it a manual run (poll exactly those, due or not).
 
-1. poll due sources → 2. dedupe/insert → 3. prefilter → 4. hydrate → 5. extract → 6. score → 7. notify → 8. write `pipeline.run` event with all counts + per-source breakdown.
+1. poll due sources (`findDueSourcesAllOrgs`, or `listSourcesByIds`) → `upsertPosts`,
+   `recordSourceRun` (lastRunAt moves even on failure so a broken source waits its interval),
+   `source.run` / `source.error` event per source.
+2. for every active campaign (`listActiveCampaignsAllOrgs`): `findExtractionCandidates`
+   (pre-filter included, oldest first, capped at 40) → hydrate snippet posts through the
+   `rss` adapter and `updatePostContent` → extract in `EXTRACT_BATCH_SIZE` batches with
+   few-shot from `listRecentLabels` → `applyRules` + `upsertLead` → notify each notifier
+   with new leads at or above `minScoreAlert` (never insufficient/disqualified).
+3. one `pipeline.run` event **per organization touched**, payload = `OrgRunReport`
+   (`id, startedAt, durationMs, counts, errors, perSource`) — the shape `runs.list` returns.
 
-Idempotent: running twice in a row does no duplicate work (cursors, dedupe, unscored-only extraction).
+Error isolation: a failing source, a failing extraction batch, a dropped post
+(`extract.dropped`, written here, not by the extractor) and a failing notifier are all
+recorded in the report's `errors`/events and the run continues. `BudgetExhaustedError`
+stops extraction for the rest of the run (`extract.budget_exhausted`); the posts stay
+candidates. Constants for event types live in `PIPELINE_EVENTS`.
+
+Idempotent: running twice in a row does no duplicate work (cursors, dedupe,
+candidates-without-a-lead). A post the model dropped is retried on the next run.
+
+Tested end-to-end in `pipeline/run.test.ts` against the real DB with fake adapters,
+extractor and notifiers — extend that test when you add a step.
 
 ## Testing
 

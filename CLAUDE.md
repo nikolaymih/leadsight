@@ -41,7 +41,7 @@ in the same PR so the next task inherits it.
 ```
 packages/core       domain: types (Zod), Drizzle schema, rules engine, sources, extractor, notifiers, pipeline. No framework deps.
 packages/contract   oRPC contract: Zod wire schemas + routes. Consumed by api and web.
-apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (skeleton: boot, db, auth, stub router, healthz; no scheduler yet)
+apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (boot, db, auth, pipeline + scheduler, healthz; oRPC router still stubbed)
 apps/web            Next.js 15 App Router dashboard.                                  (not started)
 docs/               design.md, ui-brief.md
 .claude/skills/     conventions per area (see router above)
@@ -110,7 +110,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 2. ~~`packages/core/src/errors.ts`, `db/` query module, `test/db.ts` (`withTestDb`) and seed helpers.~~ Done — `packages/core/src/{errors.ts,db/,test/}`, `@leadsight/core/test`.
 3. ~~Sources: interface, registry, `RedditSubredditSource`, `RedditSearchSource`, `RssSource`, hydrators. Fixture-based tests.~~ Done — `packages/core/src/sources/`, `src/test/fake-fetch.ts`, hand-authored fixtures (replace with recordings once Reddit credentials exist).
 4. ~~Extractor: providers, budget, few-shot, `LlmExtractor` with fake-provider tests. Prompt v1.~~ Done — `packages/core/src/extractor/`, `PROMPT_VERSION = "2026-09-08.1"`.
-5. Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.
+5. ~~Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.~~ Done — `packages/core/src/pipeline/`, `apps/api/src/plugins/{pipeline,scheduler}.ts`.
 6. oRPC procedures for campaigns, sources, leads, runs (real implementations).
 7. Campaign draft endpoint (LLM-generated draft from chat + URLs).
 8. `apps/web`: shell, auth screens, inbox, lead panel, campaign setup chat, sources & runs, settings — per `docs/ui-brief.md`.

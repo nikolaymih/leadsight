@@ -18,7 +18,8 @@ apps/api/src/
     db.ts             decorates app.db (drizzle client), closes the pool on app.close
     auth.ts           decorates app.auth, mounts /api/auth/* in an encapsulated scope with a raw-string body parser
     orpc.ts           RPCHandler from @orpc/server/fastify, mounts /rpc/*
-    scheduler.ts      node-cron jobs, started on ready, stopped on close           (step 5)
+    pipeline.ts       builds core's PipelineDeps from env once (registry, providers, budget), decorates app.pipeline
+    scheduler.ts      one node-cron job → runPipeline(app.pipeline); createTick() mutex; started on ready, stopped on close
   orpc/
     context.ts        Context type, buildContext(request, { db, auth }), requireOrg middleware
     implementer.ts    os = implement(contract).$context<Context>(); authed = os.use(requireOrg)
@@ -41,7 +42,7 @@ declaration output (TS2742).
 - **Plugins via `fastify-plugin`** so decorators are visible app-wide. Every file in
   `plugins/` exports `fp(async (app, opts) => { ... })` with a `name` and `dependencies`.
 - **Register order matters** and is fixed in `app.ts`: env → logger config → cors → db →
-  auth → orpc → scheduler → routes. Don't register anything outside `app.ts`.
+  auth → pipeline → orpc → scheduler → routes. Don't register anything outside `app.ts`.
 - **No business logic in the API package.** Procedures call functions from
   `@leadsight/core` and map rows to contract shapes. See `code-style` skill.
 - **Auth on every oRPC procedure** except none. The oRPC context builder reads the Better
@@ -103,12 +104,17 @@ add `OpenAPIHandler` from `@orpc/openapi/fastify` on `/api/*` — the contract a
 
 ## Scheduler
 
-- `node-cron` in `plugins/scheduler.ts`. One job: `*/5 * * * *` calls
-  `runDueSources(db, ...)` from core, which picks sources whose `poll_interval_min` has
-  elapsed. Don't create one cron per source.
-- Guard against overlap with an in-process mutex (`let running = false`). If a run is
-  still going, skip the tick and log it.
-- Jobs must never throw out of the tick. Wrap in try/catch, log, write an `events` row.
+- `node-cron` in `plugins/scheduler.ts`. One job (`SCHEDULER_CRON`, default `*/5 * * * *`)
+  calls `runPipeline(app.pipeline)`; the pipeline picks the due sources itself. Don't
+  create one cron per source. `SCHEDULER_ENABLED=false` turns it off (tests do this).
+- `createTick(run, log)` is the overlap guard: a tick while the previous run is in
+  progress returns `"skipped"` and logs a warning; a throwing run returns `"failed"`
+  and logs — a tick never throws. It is exported and unit-tested without a DB.
+- `plugins/pipeline.ts` assembles the deps once: `createSourceRegistry` from
+  `REDDIT_*`, Groq/Gemini providers for whichever keys are set (a warning at boot when
+  none), `createBudget` over `createDbBudgetStore(app.db)` with `*_DAILY_TOKENS` caps,
+  and `extractorFor(orgId)`. `app.pipeline` is what the `sources.run` procedure passes
+  to `runPipeline({ ...app.pipeline, sourceIds: [id] })` for a manual run.
 
 ## Testing the API
 

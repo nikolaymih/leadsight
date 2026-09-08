@@ -401,19 +401,24 @@ retries/visibility become painful).
    `run`, upsert posts, write `post_sources`, persist cursor.
 2. **Pre-filter** — cheap local check: post must contain at least one campaign
    keyword or the source must be `reddit_search`/`rss` (already keyword-scoped).
-   Everything else is kept as a post but not extracted.
+   Everything else is kept as a post but not extracted. Implemented inside the
+   candidate query, so filtered posts never occupy the batch window.
 3. **Hydrate** — posts with `body_is_snippet = true` and a hydrator available.
 4. **Extract** — for each campaign, batch unscored candidate posts, load
    few-shot examples, call the extractor, store evidence.
 5. **Score** — `applyRules` per lead, store score, breakdown, confidence,
    verdict, `rules_version`.
 6. **Notify** — leads above threshold.
-7. **Log** — one event per step with counts and durations; per-source
-   breakdown surfaced in the dashboard.
+7. **Log** — one `pipeline.run` event per organization touched, carrying
+   counts, errors and the per-source breakdown the dashboard shows; plus
+   `source.run`, `source.error`, `extract.dropped`, `extract.error` and
+   `extract.budget_exhausted` events as they happen.
 
-Budget guard: a per-organization daily token counter; when the primary
-provider's published daily cap is near, extraction queues until the next day
-rather than switching providers silently.
+Budget guard: a per-provider daily token counter (caps are per API key, so
+usage is summed across organizations). A provider at ≥ 90% of its cap is
+skipped for the day and the next provider is used — logged, never silent.
+When every provider is over its cap, extraction stops for the run and the
+posts remain candidates for the next day.
 
 ## 5. Campaign setup chat
 
