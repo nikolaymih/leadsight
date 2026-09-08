@@ -1,9 +1,5 @@
-import { schema } from "@leadsight/core";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { createDb, type Db } from "@leadsight/core";
 import fp from "fastify-plugin";
-import postgres from "postgres";
-
-export type Db = PostgresJsDatabase<typeof schema>;
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -19,10 +15,10 @@ export interface DbPluginOptions {
 // (`pnpm db:migrate`), so a bad migration cannot take the API down mid-rollout.
 export const dbPlugin = fp<DbPluginOptions>(
   async (app, opts) => {
-    const client = postgres(opts.databaseUrl, { max: 10, idle_timeout: 20 });
-    app.decorate("db", drizzle(client, { schema }));
+    const client = createDb(opts.databaseUrl);
+    app.decorate("db", client.db);
     app.addHook("onClose", async () => {
-      await client.end({ timeout: 5 });
+      await client.close();
     });
   },
   { name: "db" },

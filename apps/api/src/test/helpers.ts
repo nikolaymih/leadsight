@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Contract } from "@leadsight/contract";
+import { createTestDb } from "@leadsight/core/test";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
@@ -7,19 +8,23 @@ import type { InjectOptions } from "fastify";
 import { type App, buildApp } from "../app.js";
 import { loadEnv } from "../env.js";
 
-// Tests run against a real Postgres with migrations applied (see the postgres-drizzle
-// skill). DATABASE_URL defaults to the docker-compose instance.
+// Each test app gets its own freshly migrated database (see the postgres-drizzle skill).
+// `app.close()` drops it.
 
 export async function buildTestApp(): Promise<App> {
+  const testDb = await createTestDb();
   const env = loadEnv({
     NODE_ENV: "test",
     LOG_LEVEL: "silent",
-    DATABASE_URL: process.env.DATABASE_URL ?? "postgres://leadsight:leadsight@localhost:5432/leadsight",
+    DATABASE_URL: testDb.url,
     WEB_ORIGIN: "http://localhost:3000",
     BETTER_AUTH_URL: "http://localhost:3001",
     BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret",
   });
   const app = await buildApp(env);
+  app.addHook("onClose", async () => {
+    await testDb.close();
+  });
   await app.ready();
   return app;
 }

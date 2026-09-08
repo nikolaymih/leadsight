@@ -1,8 +1,8 @@
+import type { Db } from "@leadsight/core";
 import { ORPCError, os } from "@orpc/server";
 import type { FastifyBaseLogger, FastifyRequest } from "fastify";
 import type { Auth } from "../auth.js";
 import { toWebHeaders } from "../http.js";
-import type { Db } from "../plugins/db.js";
 
 export type AuthSession = NonNullable<Awaited<ReturnType<Auth["api"]["getSession"]>>>;
 
