@@ -33,9 +33,15 @@ describe("api skeleton", () => {
     await expect(rpcClient(app, jar).campaigns.list()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("reaches the stub router once an organization is active", async () => {
+  it("reaches the router once an organization is active", async () => {
     const jar = await signUp(app);
     await createOrganization(app, jar);
-    await expect(rpcClient(app, jar).campaigns.list()).rejects.toMatchObject({ code: "NOT_IMPLEMENTED" });
+    await expect(rpcClient(app, jar).campaigns.list()).resolves.toEqual([]);
+    // Procedures still stubbed answer 501.
+    await expect(
+      rpcClient(app, jar).campaigns.draft({ messages: [{ role: "user", content: "hi" }] }),
+    ).rejects.toMatchObject({
+      code: "NOT_IMPLEMENTED",
+    });
   });
 });

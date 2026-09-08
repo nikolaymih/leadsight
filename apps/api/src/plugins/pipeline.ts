@@ -1,4 +1,5 @@
 import {
+  type Budget,
   type ChatProvider,
   createBudget,
   createDbBudgetStore,
@@ -12,9 +13,14 @@ import fp from "fastify-plugin";
 import type { Env } from "../env.js";
 
 // Assembles the pipeline's dependencies from env once per process. The scheduler runs
-// them on a timer; the sources.run procedure reuses them for manual runs.
+// them on a timer; the sources.run procedure reuses them for manual runs; runs.budget
+// reads the budget.
 
-export type Pipeline = Omit<PipelineDeps, "sourceIds" | "maxCandidatesPerCampaign">;
+export type Pipeline = Omit<PipelineDeps, "sourceIds" | "maxCandidatesPerCampaign"> & {
+  budget: Budget;
+  /** Configured providers in fallback order. */
+  providerNames: readonly string[];
+};
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -53,11 +59,13 @@ export const pipelinePlugin = fp<PipelinePluginOptions>(
       caps: { groq: env.GROQ_DAILY_TOKENS ?? null, gemini: env.GEMINI_DAILY_TOKENS ?? null },
     });
 
-    app.decorate("pipeline", {
+    const pipeline: Pipeline = {
       db: app.db,
       registry,
       notifiers: [],
       logger: app.log,
+      budget,
+      providerNames: providers.map((p) => p.name),
       extractorFor: (organizationId) =>
         createLlmExtractor({
           providers,
@@ -65,7 +73,8 @@ export const pipelinePlugin = fp<PipelinePluginOptions>(
           organizationId,
           log: (event, data) => app.log.info(data, event),
         }),
-    } satisfies Pipeline);
+    };
+    app.decorate("pipeline", pipeline);
   },
   { name: "pipeline", dependencies: ["db"] },
 );

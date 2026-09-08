@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Contract } from "@leadsight/contract";
+import { schema } from "@leadsight/core";
 import { createTestDb } from "@leadsight/core/test";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
@@ -77,6 +78,36 @@ export async function createOrganization(app: App, jar: CookieJar, name = "Test 
   absorb(jar, res.headers["set-cookie"]);
   const { id } = res.json<{ id: string }>();
   return id;
+}
+
+export async function currentUserId(app: App, jar: CookieJar): Promise<string> {
+  const res = await app.inject({
+    method: "GET",
+    url: "/api/auth/get-session",
+    headers: { cookie: cookieHeader(jar) },
+  });
+  const body = res.json<{ user?: { id: string } } | null>();
+  if (!body?.user) throw new Error(`no session: ${res.statusCode} ${res.body}`);
+  return body.user.id;
+}
+
+/** Add the signed-in user to an existing organization with a role and make it active. */
+export async function joinOrganization(
+  app: App,
+  jar: CookieJar,
+  organizationId: string,
+  role: "member" | "admin" | "owner",
+): Promise<void> {
+  const userId = await currentUserId(app, jar);
+  await app.db.insert(schema.member).values({ id: randomUUID(), organizationId, userId, role });
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/auth/organization/set-active",
+    headers: { cookie: cookieHeader(jar) },
+    payload: { organizationId },
+  });
+  if (res.statusCode !== 200) throw new Error(`set-active failed: ${res.statusCode} ${res.body}`);
+  absorb(jar, res.headers["set-cookie"]);
 }
 
 // ---------------------------------------------------------------------------
