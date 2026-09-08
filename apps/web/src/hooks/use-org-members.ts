@@ -23,6 +23,20 @@ export function useOrgMembers(): { members: OrgMember[]; isPending: boolean } {
   return { members, isPending };
 }
 
+export type OrgRole = "member" | "admin" | "owner";
+
+/** The signed-in user's role in the active organization. `null` until both are known. */
+export function useOrgRole(): OrgRole | null {
+  const { data: session } = authClient.useSession();
+  const { members } = useOrgMembers();
+  const role = members.find((m) => m.userId === session?.user.id)?.role;
+  return role === "owner" || role === "admin" || role === "member" ? role : null;
+}
+
+export function canManage(role: OrgRole | null): boolean {
+  return role === "admin" || role === "owner";
+}
+
 export function memberName(members: OrgMember[], userId: string | null): string {
   if (!userId) return "Unassigned";
   return members.find((m) => m.userId === userId)?.name ?? "Unknown";
