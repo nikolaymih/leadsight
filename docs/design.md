@@ -339,11 +339,20 @@ export interface Extractor {
 ```
 
 `LlmExtractor` implements this with an OpenAI-compatible client, a provider
-chain `[groq, gemini]`, retry once on 429/5xx, strict JSON output validated
-with Zod before anything is written. Unknown or malformed results for a post
-are re-queued once, then dropped with an event. The model never sees weights
-or thresholds; it only answers the criterion questions with a value, a quote
-and a per-field confidence.
+chain `[groq, gemini]`, retry once on 429/5xx (honouring `Retry-After`), strict
+JSON output validated with Zod before anything is written. Unknown or malformed
+results for a post are re-asked once, alone, then returned in `dropped` with a
+reason; the pipeline writes the `extract.dropped` event. The model never sees
+weights or thresholds; it only answers the criterion questions with a value, a
+quote and a per-field confidence.
+
+`extract` additionally returns `dropped`, token `usage`, and `provider` as
+`<name>/<model>` (stored on the lead). The model is asked for a JSON *object*
+`{ "results": [...] }` because JSON mode requires an object root. Token budget
+is per provider per UTC day, summed across organizations (caps are per API key),
+persisted as `llm.usage` rows in `events`; a provider at ≥ 90% of its cap is
+skipped, and when none is left the extractor throws `BudgetExhaustedError` so
+posts stay unscored for the next run.
 
 ### 3.3 Rules (deterministic)
 

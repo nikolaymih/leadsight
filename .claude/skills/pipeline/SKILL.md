@@ -12,8 +12,10 @@ packages/core/src/
   sources/    source.ts (Source, SourceDeps, SourceRunResult), registry.ts (createSourceRegistry),
               config.ts (validateSourceConfig), text.ts + url.ts (pure helpers, tested),
               reddit/{client,listing,subreddit,search}.ts, rss.ts, hydrate/{linkedin,x}.ts
-  extractor/  extractor.ts (interface), llm-extractor.ts, prompt.ts, providers/{groq,gemini}.ts,
-              budget.ts, fewshot.ts
+  extractor/  extractor.ts (Extractor, ExtractionInput/Result, EXTRACT_BATCH_SIZE), llm-extractor.ts
+              (createLlmExtractor, parseResponse), prompt.ts (PROMPT_VERSION, SYSTEM_PROMPT, buildUserPrompt),
+              fewshot.ts (selectFewShot, formatExample), budget.ts (createBudget, createDbBudgetStore),
+              providers/{provider,openai-compatible,groq,gemini}.ts
   rules/      index.ts (pure), tested
   notify/     notifier.ts, slack.ts, email.ts
   pipeline/   run.ts (orchestrates steps), prefilter.ts, dedupe.ts
@@ -79,18 +81,33 @@ packages/core/src/
   chat endpoint: Groq `https://api.groq.com/openai/v1`, Gemini
   `https://generativelanguage.googleapis.com/v1beta/openai`. Model ids live in env
   (`GROQ_MODEL`, `GEMINI_MODEL`), never in code.
-- One request scores a **batch** of 5–10 posts. Output is a JSON array validated with
-  `z.array(z.object({ id, evidence: evidenceSchema }))`. Use `response_format: { type: "json_object" }`
-  where supported and still validate.
-- Per-post validation: a malformed item is re-queued once (alone), then dropped with an
-  `events` row `extract.dropped`. Never let one bad item fail the batch.
-- Retry policy: on 429 or 5xx, retry once after the `Retry-After` (default 2s) on the same
-  provider, then fall through to the next provider. On 4xx other than 429, fail the batch
-  (it's our bug) and log the response body.
-- **Budget** (`budget.ts`): count prompt+completion tokens from the response `usage` per
-  provider per day in `events` (`llm.usage`). Before each batch, if used > 90% of that
-  provider's configured daily cap (`GROQ_DAILY_TOKENS`), skip it. If every provider is
-  over budget, stop extracting and leave posts unscored for the next run — do not drop them.
+- Providers implement `ChatProvider { name, model, complete(request) }` and are thin:
+  `createOpenAiCompatibleProvider` wraps the `openai` SDK with `maxRetries: 0` (the
+  extractor owns retry/fallback) and maps failures to `ProviderError` with `status`,
+  `retryable` (429/5xx/network) and `retryAfterMs`. `createGroqProvider` /
+  `createGeminiProvider` only set the base URL. Pass `fetch` to test against `fakeFetch`.
+- One request scores a **batch** (`EXTRACT_BATCH_SIZE = 8`; the pipeline slices). The model
+  is asked for a JSON **object** `{"results": [{id, evidence}]}` — JSON mode needs an object
+  root — with `response_format: { type: "json_object" }`; `parseResponse` strips stray
+  code fences, validates each item with `evidenceSchema`, drops criteria keys we didn't ask
+  about, and ignores unknown ids.
+- Per-post validation: malformed or missing items are re-asked once, alone, then returned
+  in `ExtractionResult.dropped` with a reason. The extractor is DB-free apart from budget
+  accounting, so the **pipeline** writes the `extract.dropped` event. Never let one bad
+  item fail the batch.
+- Retry policy: on a retryable `ProviderError`, retry once after `retryAfterMs` (default
+  2s) on the same provider, then fall through to the next provider; when all fail, the
+  last error propagates. A non-retryable error (400/401/403 — our bug) throws immediately.
+- **Budget** (`budget.ts`): `createBudget({ store, caps })` over a `BudgetStore`;
+  `createDbBudgetStore(db)` writes `llm.usage` events (`entityId` = provider, payload has
+  `totalTokens`) and sums them with `sumLlmUsageSince` from the start of the UTC day,
+  across organizations (caps are per API key). `canSpend` is false at ≥ 90% of the cap;
+  uncapped providers always pass. When every provider is over budget the extractor throws
+  `BudgetExhaustedError` — the pipeline must catch it and leave posts unscored, not drop them.
+  `budget.status(provider)` feeds `runs.budget`.
+- Few-shot: `selectFewShot(labels, limit)` alternates positive/negative from newest;
+  `formatExample` truncates to 600 chars and appends the reviewer note. The pipeline loads
+  labels with `listRecentLabels` and passes the selection in `ExtractionInput.examples`.
 - The model never sees weights or thresholds. It receives criteria as `{key, question, type, options}`.
 - Prompt template lives in `prompt.ts` with `PROMPT_VERSION = "2026-09-08.1"`. Bump it on
   any wording change; it's stored on every lead.
