@@ -61,8 +61,9 @@ describe("db/posts", () => {
     if (!scoredPost) throw new Error("expected the post row");
     await seedLead(t.db, a, scoredPost);
 
+    // Posts from one batch share a fetched_at, so their relative order is by uuid — arbitrary.
     const unscored = await findUnscoredPosts(t.db, TEST_ORG, a.id);
-    expect(unscored.map((p) => p.externalId)).toEqual(["t3_2", "t3_3"]);
+    expect(unscored.map((p) => p.externalId).sort()).toEqual(["t3_2", "t3_3"]);
 
     expect(await findUnscoredPosts(t.db, TEST_ORG, a.id, 1)).toHaveLength(1);
     expect(await findUnscoredPosts(t.db, "org_other", a.id)).toHaveLength(0);
