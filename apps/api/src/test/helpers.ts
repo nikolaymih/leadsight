@@ -20,6 +20,7 @@ export async function buildTestApp(): Promise<App> {
     WEB_ORIGIN: "http://localhost:3000",
     BETTER_AUTH_URL: "http://localhost:3001",
     BETTER_AUTH_SECRET: "test-secret-test-secret-test-secret",
+    SCHEDULER_ENABLED: "false",
   });
   const app = await buildApp(env);
   app.addHook("onClose", async () => {

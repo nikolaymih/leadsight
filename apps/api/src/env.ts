@@ -3,6 +3,15 @@ import { z } from "zod";
 // The only place that reads process.env. Everything downstream receives `Env`.
 
 const optionalString = z.preprocess((v) => (v === "" ? undefined : v), z.string().optional());
+const optionalInt = z.preprocess(
+  (v) => (v === "" || v === undefined ? undefined : Number(v)),
+  z.number().int().positive().optional(),
+);
+const flag = (fallback: "true" | "false") =>
+  z
+    .enum(["true", "false"])
+    .default(fallback)
+    .transform((v) => v === "true");
 
 const envSchema = z
   .object({
@@ -16,6 +25,18 @@ const envSchema = z
     BETTER_AUTH_SECRET: z.string().min(1),
     GOOGLE_CLIENT_ID: optionalString,
     GOOGLE_CLIENT_SECRET: optionalString,
+    // Pipeline
+    REDDIT_CLIENT_ID: optionalString,
+    REDDIT_CLIENT_SECRET: optionalString,
+    REDDIT_USER_AGENT: z.string().default("leadsight/0.1"),
+    GROQ_API_KEY: optionalString,
+    GROQ_MODEL: z.string().default("openai/gpt-oss-120b"),
+    GROQ_DAILY_TOKENS: optionalInt,
+    GEMINI_API_KEY: optionalString,
+    GEMINI_MODEL: z.string().default("gemini-2.5-flash-lite"),
+    GEMINI_DAILY_TOKENS: optionalInt,
+    SCHEDULER_ENABLED: flag("true"),
+    SCHEDULER_CRON: z.string().default("*/5 * * * *"),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production" && env.BETTER_AUTH_SECRET.length < 32) {
