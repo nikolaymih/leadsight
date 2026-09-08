@@ -52,7 +52,10 @@ export const auth = betterAuth({
   - `member`: read everything in the org, update lead status/assignee/notes.
   - `admin`: plus create/edit campaigns and sources, run sources, manage members.
   - `owner`: plus delete campaigns, change org settings.
-  Enforce in oRPC middleware (`requireRole("admin")`), not in the UI alone.
+  Enforce in oRPC middleware (`requireRole("admin")`), not in the UI alone. The role is
+  read by `buildContext` straight from Better Auth's `member` table (one indexed query per
+  request; comma-separated multi-roles resolve to the highest). A signed-in user whose
+  active org has no membership row gets `FORBIDDEN` from `requireOrg`.
 - On signup, if the user has no org, the web app prompts to create one or shows pending
   invitations. Internal use: the first user creates "Dev Craft" and invites the others.
 

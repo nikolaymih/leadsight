@@ -70,15 +70,36 @@ The server implements it, the web app consumes it, both are type-checked against
 
 ```ts
 // apps/api/src/orpc/context.ts
-export interface Context { db: Db; logger: Logger; session: Session | null; orgId: string | null }
-
-// base middleware, applied to every procedure
-export const requireOrg = os.$context<Context>().middleware(async ({ context, next, errors }) => {
-  if (!context.session) throw errors.UNAUTHORIZED();
-  if (!context.orgId) throw errors.FORBIDDEN();
-  return next({ context: { ...context, orgId: context.orgId } }); // narrows to string
-});
+export interface Context {
+  db: Db; logger: Logger; pipeline: Pipeline;
+  session: AuthSession | null; orgId: string | null; role: "member" | "admin" | "owner" | null;
+}
 ```
+
+`buildContext` reads the session (cookie cache disabled), the active org, and the user's
+role from Better Auth's `member` table. `orpc/implementer.ts` exposes three builders:
+
+| builder  | middleware                                          | use for                                   |
+|----------|-----------------------------------------------------|-------------------------------------------|
+| `authed` | `mapCoreErrors` → `requireOrg`                      | reads, lead triage (any member)           |
+| `admin`  | `authed` → `requireRole("admin")`                   | campaigns, sources, manual runs, rescore  |
+| `owner`  | `authed` → `requireRole("owner")`                   | deletes, org settings                     |
+
+`requireOrg` narrows `session`, `orgId` and `role` to non-null in the handler context.
+`mapCoreErrors` (`orpc/error-map.ts`) is the single translation point: `NotFoundError` →
+`NOT_FOUND`, `ValidationError` → `BAD_REQUEST` with `data.issues`, `BudgetExhaustedError` →
+`SERVICE_UNAVAILABLE`, `ProviderError` → `BAD_GATEWAY`. Handlers throw `ORPCError` directly
+only for conditions that have no core error (e.g. a manual run's per-source failure).
+
+## Mappers
+
+`orpc/mappers.ts` turns rows into wire shapes (`toCampaign`, `toSource`, `toLeadSummary`,
+`toLeadDetail`, `toNote`, `toPipelineRun`). Pure; dates → ISO. Wire types come from the
+contract's schemas via `z.infer`, so a contract change fails to compile here first. Row
+types that live in the schema are reached as `schema.Campaign` / `schema.Post`.
+
+Handlers that change state also `appendEvent` (`campaign.created`, `campaign.rules_changed`,
+`campaign.rescored`, `lead.status_changed`, `lead.bulk_status_changed`).
 
 ## Client (web)
 
@@ -106,5 +127,10 @@ export const orpc = createTanstackQueryUtils(client);
 ## Testing
 
 - `packages/contract` has no runtime logic; test only custom Zod refinements if any.
-- Procedure tests live in `apps/api` and call the router directly with a fake context:
-  `await call(router.campaigns.get, { id }, { context })` from `@orpc/server`.
+- Procedure tests live in `apps/api/src/orpc/procedures.test.ts` and go through the real
+  typed client over `app.inject` (`rpcClient(app, jar)` from `test/helpers.ts`), with real
+  sessions: `signUp` → `createOrganization` (owner) and `joinOrganization(app, jar, orgId,
+  "member")` for role checks. Seed data with `@leadsight/core/test` helpers on `app.db`
+  using the real org id. Swap `app.pipeline.registry` for a fake when a test needs
+  `sources.run`. Assert on `error.code`. `call()` from `@orpc/server` is available for
+  narrow unit tests but the client path is preferred — it exercises the wire.

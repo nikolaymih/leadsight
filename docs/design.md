@@ -497,7 +497,10 @@ GET    /runs/budget                 tokens used today per provider
 Transport: oRPC `RPCHandler` on `/rpc/*` for the web app (typed client, TanStack Query
 utils). Better Auth on `/api/auth/*`. Plain Fastify `GET /healthz`.
 
-All routes scoped by the active organization from the session.
+All routes scoped by the active organization from the session, and gated by the
+member's role in it: `member` reads and triages leads; `admin` additionally
+manages campaigns and sources, runs sources and rescores; `owner` additionally
+deletes and changes organization settings.
 
 ## 8. Open decisions
 
