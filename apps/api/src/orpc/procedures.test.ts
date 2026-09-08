@@ -179,6 +179,41 @@ describe("sources", () => {
   });
 });
 
+describe("campaign draft", () => {
+  it("admin gets a reply and a draft from the drafter; members cannot draft", async () => {
+    const realDrafterFor = app.pipeline.drafterFor;
+    app.pipeline.drafterFor = () => ({
+      async draft(input) {
+        expect(input.messages).toEqual([{ role: "user", content: "We build MVPs for founders" }]);
+        expect(input.urls).toEqual(["https://example.com/"]);
+        return {
+          reply: "Drafted.",
+          draft: { ...draft, alertQueries: ['site:linkedin.com/posts "looking for a cto"'] },
+          provider: "fake/model",
+          promptVersion: "test",
+          usage: { promptTokens: 1, completionTokens: 1 },
+          warnings: [],
+        };
+      },
+    });
+    try {
+      const out = await owner.campaigns.draft({
+        messages: [{ role: "user", content: "We build MVPs for founders" }],
+        urls: ["https://example.com/"],
+      });
+      expect(out.reply).toBe("Drafted.");
+      expect(out.draft?.criteria).toEqual(mvpCriteria);
+      expect(out.draft?.suggestedSources).toHaveLength(2);
+
+      await expect(
+        member.campaigns.draft({ messages: [{ role: "user", content: "hi" }] }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    } finally {
+      app.pipeline.drafterFor = realDrafterFor;
+    }
+  });
+});
+
 describe("leads", () => {
   it("member lists, reads, triages (with label + event), bulk-updates and annotates leads", async () => {
     const campaign = await owner.campaigns.create({ ...draft, name: "Leads", suggestedSources: [] });

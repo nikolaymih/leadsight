@@ -10,7 +10,6 @@ import {
 } from "@leadsight/core";
 import { admin, authed } from "../implementer.js";
 import { toCampaign } from "../mappers.js";
-import { notImplemented } from "../not-implemented.js";
 
 export const campaigns = {
   list: authed.campaigns.list.handler(async ({ context }) => {
@@ -21,8 +20,14 @@ export const campaigns = {
     return toCampaign(await getCampaign(context.db, context.orgId, input.id));
   }),
 
-  /** Setup chat → draft. Step 7. */
-  draft: authed.campaigns.draft.handler(notImplemented),
+  /** Setup chat → draft. One LLM call over the conversation and any pasted pages. */
+  draft: admin.campaigns.draft.handler(async ({ input, context }) => {
+    const result = await context.pipeline.drafterFor(context.orgId).draft(input);
+    if (result.warnings.length > 0) {
+      context.logger.warn({ warnings: result.warnings }, "campaign draft: some pages could not be read");
+    }
+    return { reply: result.reply, draft: result.draft };
+  }),
 
   create: admin.campaigns.create.handler(async ({ input, context }) => {
     const { suggestedSources, ...fields } = input;

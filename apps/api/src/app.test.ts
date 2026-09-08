@@ -37,11 +37,5 @@ describe("api skeleton", () => {
     const jar = await signUp(app);
     await createOrganization(app, jar);
     await expect(rpcClient(app, jar).campaigns.list()).resolves.toEqual([]);
-    // Procedures still stubbed answer 501.
-    await expect(
-      rpcClient(app, jar).campaigns.draft({ messages: [{ role: "user", content: "hi" }] }),
-    ).rejects.toMatchObject({
-      code: "NOT_IMPLEMENTED",
-    });
   });
 });
