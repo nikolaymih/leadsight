@@ -9,8 +9,9 @@ Read `docs/design.md` §3–§6 first; this skill is the implementation guide fo
 
 ```
 packages/core/src/
-  sources/    source.ts (interface), reddit-subreddit.ts, reddit-search.ts, rss.ts,
-              hydrate/linkedin.ts, hydrate/x.ts, registry.ts
+  sources/    source.ts (Source, SourceDeps, SourceRunResult), registry.ts (createSourceRegistry),
+              config.ts (validateSourceConfig), text.ts + url.ts (pure helpers, tested),
+              reddit/{client,listing,subreddit,search}.ts, rss.ts, hydrate/{linkedin,x}.ts
   extractor/  extractor.ts (interface), llm-extractor.ts, prompt.ts, providers/{groq,gemini}.ts,
               budget.ts, fewshot.ts
   rules/      index.ts (pure), tested
@@ -26,20 +27,34 @@ packages/core/src/
   `sourceConfigSchema` from core's `types.ts` — one definition, re-exported by the contract
   for the web app. Core never imports the contract (the contract depends on core).
   `RawPost` also lives in `types.ts`.
+- Adapters get their outside world through `SourceDeps` (`fetch`, `userAgent`, `now`, `sleep`,
+  Reddit credentials) at construction — `createSourceRegistry({ userAgent, reddit, fetch? })`
+  builds them all. `run(config, cursor)` therefore keeps the shape in design.md and tests
+  inject a fake fetch. Never reach for the global `fetch` inside an adapter.
 - `run(config, cursor)` is read-only and idempotent. Return `nextCursor` even on partial
-  failure so progress is never lost.
-- Never throw for a single bad item; push a warning and continue.
-- All HTTP via `fetch` with `AbortSignal.timeout(15_000)` and a fixed User-Agent from env.
+  failure so progress is never lost. A whole-request failure (auth, 5xx after retry, bad
+  feed) throws `ProviderError`; the pipeline records it in `sources.last_error`.
+- Never throw for a single bad item; push a warning and continue. Every external payload
+  is Zod-parsed item by item (`redditPostSchema`, oEmbed).
+- All HTTP via `deps.fetch` with `AbortSignal.timeout(REQUEST_TIMEOUT_MS)` and the
+  User-Agent from deps.
 - **Reddit**: OAuth client-credentials flow (`client_credentials` grant, cached token with
   expiry). Respect `X-Ratelimit-Remaining` / `X-Ratelimit-Reset` headers; if remaining < 5,
   sleep until reset. Endpoints: `/r/{sub}/new.json?limit=100&before=<fullname>` and
-  `/search.json?q=...&sort=new&restrict_sr=1`. Cursor = newest `name` (fullname) seen.
-  Strip Reddit markdown lightly (links kept as text). Post body = `selftext`; skip
-  `[removed]`/`[deleted]`.
+  `/search.json?q=...&sort=new&restrict_sr=1`. `reddit/client.ts` owns the token cache
+  (refreshes 60s early, re-auths once on 401), one retry on 429/5xx honouring
+  `Retry-After`, and the rate-limit sleep. Cursors: subreddit `{ newest: fullname }` walked
+  with `before` (max 5 pages; if the cursor post vanished and `before` returns nothing,
+  refetch the latest page and let dedupe absorb repeats); search `{ newestCreatedUtc }`
+  filtered client-side (max 3 pages). Strip Reddit markdown lightly (links kept as text).
+  Post body = `selftext`, or the title for link posts; skip `[removed]`/`[deleted]`.
 - **RSS**: `rss-parser` over the Google Alerts feed. Items have title, link (wrapped in a
   Google redirect — unwrap `url=` param), `published`, and a content snippet. Set
-  `bodyIsSnippet: true`, `platform` from config, `externalId` = canonical URL (strip
-  tracking params, lowercase host). Cursor = newest `published`.
+  `bodyIsSnippet: true`, `platform` from config, `externalId` = `canonicalUrl(target)`
+  (lowercase host, no hash, tracking params and `utm_*` dropped, no trailing slash — see
+  `url.ts`). The `url` column keeps the original target. Cursor `{ newestPublished: ISO }`.
+  Parse with `parser.parseString(text)` on a body fetched through `deps.fetch`, never
+  `parseURL` (it would bypass the injected fetch).
 - **Hydrators** (`hydrate/`): given a `RawPost` with a snippet, try to fetch the full text.
   - LinkedIn: GET the post URL with a crawler-like UA; parse the `<meta property="og:description">`
     and the main text blocks. On auth wall (HTTP 999 or redirect to `/authwall`), keep the snippet.
@@ -111,8 +126,13 @@ Idempotent: running twice in a row does no duplicate work (cursors, dedupe, unsc
 
 ## Testing
 
-- Adapters: fixtures in `src/test/fixtures/<source>/` recorded from real responses (scrub
-  nothing sensitive — they're public posts). Use `msw` or an injected `fetch` to serve them.
+- Adapters: `src/test/fake-fetch.ts` — `fakeFetch(routes)` returns a `fetch` plus every
+  recorded call (`callsTo(match)`); `jsonResponse`/`textResponse` build responses, a
+  `respond: Response[]` sequence drives retry scenarios, `loadFixture(path)` reads
+  `src/test/fixtures/<source>/…`. No msw (not approved), no live network.
+  The current fixtures are hand-authored from the documented payload shapes — the
+  scaffolding sandbox had no egress — so replace them with real recordings once Reddit
+  credentials exist (public posts; nothing to scrub) and keep them small.
 - Extractor: inject a fake provider returning canned JSON; test batching, validation,
   fallback, and budget behavior. Never call a real LLM in tests.
 - Pipeline: integration test against the test DB with fake adapters end-to-end.

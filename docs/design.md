@@ -291,6 +291,10 @@ export interface Source<C = unknown> {
 
 Rules:
 
+- Adapters receive `fetch`, credentials and a clock at construction (through
+  `createSourceRegistry(deps)`), never from globals, so `run` keeps this exact
+  shape and tests inject a fake fetch. `SourceRunResult.warnings` is always
+  present (possibly empty).
 - `run` is read-only and idempotent for a given cursor. Re-running with the
   same cursor must not duplicate posts; dedupe happens on
   `(platform, external_id)` at insert time regardless.
@@ -301,11 +305,15 @@ Rules:
 
 Implementations in v1:
 
-- `RedditSubredditSource` — Reddit OAuth, `/r/{sub}/new`, cursor = newest
-  fullname seen.
-- `RedditSearchSource` — `/search` with `sort=new`, cursor = newest `created_utc`.
-- `RssSource` — parses any RSS/Atom feed (Google Alerts), cursor = newest
-  `published`; `platform` taken from config; calls `hydrate` per platform.
+- `RedditSubredditSource` — Reddit OAuth, `/r/{sub}/new`, cursor
+  `{ newest: fullname }` walked with `before`. If the cursor post was deleted
+  Reddit returns an empty page; the adapter then refetches the latest page
+  once so the cursor can move, and dedupe absorbs the repeats.
+- `RedditSearchSource` — `/search` with `sort=new`, cursor
+  `{ newestCreatedUtc }`, older results filtered client-side.
+- `RssSource` — parses any RSS/Atom feed (Google Alerts), cursor
+  `{ newestPublished }`; `platform` taken from config; `external_id` is the
+  canonical target URL; calls `hydrate` per platform.
 
 ### 3.2 Extractor (LLM)
 

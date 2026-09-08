@@ -108,7 +108,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 
 1. ~~`apps/api` skeleton: env.ts, app.ts, server.ts, db plugin, Better Auth plugin, oRPC plugin with a stub router, health route. `docker-compose.yml`. First migration generated and applied.~~ Done — `apps/api/src`, `packages/core/drizzle/0000_init.sql`.
 2. ~~`packages/core/src/errors.ts`, `db/` query module, `test/db.ts` (`withTestDb`) and seed helpers.~~ Done — `packages/core/src/{errors.ts,db/,test/}`, `@leadsight/core/test`.
-3. Sources: interface, registry, `RedditSubredditSource`, `RedditSearchSource`, `RssSource`, hydrators. Fixture-based tests.
+3. ~~Sources: interface, registry, `RedditSubredditSource`, `RedditSearchSource`, `RssSource`, hydrators. Fixture-based tests.~~ Done — `packages/core/src/sources/`, `src/test/fake-fetch.ts`, hand-authored fixtures (replace with recordings once Reddit credentials exist).
 4. Extractor: providers, budget, few-shot, `LlmExtractor` with fake-provider tests. Prompt v1.
 5. Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.
 6. oRPC procedures for campaigns, sources, leads, runs (real implementations).
