@@ -1,4 +1,4 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { type Event, events } from "../schema/index.js";
 import type { DbLike } from "./client.js";
 
@@ -39,4 +39,15 @@ export async function sumLlmUsageSince(db: DbLike, provider: string, since: Date
     .from(events)
     .where(and(eq(events.type, "llm.usage"), eq(events.entityId, provider), gte(events.createdAt, since)));
   return row?.total ?? 0;
+}
+
+/** Payloads of the most recent `pipeline.run` events for an organization, newest first. */
+export async function listPipelineRunPayloads(db: DbLike, orgId: string, limit = 20): Promise<unknown[]> {
+  const rows = await db
+    .select({ payload: events.payload })
+    .from(events)
+    .where(and(eq(events.organizationId, orgId), eq(events.type, "pipeline.run")))
+    .orderBy(desc(events.createdAt))
+    .limit(limit);
+  return rows.map((r) => r.payload);
 }

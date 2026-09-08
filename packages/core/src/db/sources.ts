@@ -55,6 +55,16 @@ export async function getSource(db: DbLike, orgId: string, id: string): Promise<
   return row;
 }
 
+export async function getSourceWithStats(db: DbLike, orgId: string, id: string): Promise<SourceWithStats> {
+  const [row] = await db
+    .select({ source: sources, postsLast24h })
+    .from(sources)
+    .where(and(eq(sources.organizationId, orgId), eq(sources.id, id)))
+    .limit(1);
+  if (!row) throw new NotFoundError("source", id);
+  return { ...row.source, postsLast24h: row.postsLast24h };
+}
+
 export async function createSource(db: DbLike, orgId: string, input: CreateSourceInput): Promise<Source> {
   await getCampaign(db, orgId, input.campaignId); // NotFound if the campaign is not in this org
   const { kind, config } = validateConfig({ kind: input.kind, config: input.config });
