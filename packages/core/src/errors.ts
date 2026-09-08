@@ -21,18 +21,29 @@ export class ValidationError extends Error {
   }
 }
 
+/** Every LLM provider is at its daily cap. Posts stay unscored until the next run. */
+export class BudgetExhaustedError extends Error {
+  constructor(readonly providers: readonly string[]) {
+    super(`daily token budget exhausted for: ${providers.join(", ")}`);
+    this.name = "BudgetExhaustedError";
+  }
+}
+
 export class ProviderError extends Error {
   readonly status: number | undefined;
   readonly retryable: boolean;
+  /** From a `Retry-After` header, when the provider sent one. */
+  readonly retryAfterMs: number | undefined;
 
   constructor(
     readonly provider: string,
     message: string,
-    opts: { status?: number; retryable?: boolean; cause?: unknown } = {},
+    opts: { status?: number; retryable?: boolean; retryAfterMs?: number; cause?: unknown } = {},
   ) {
     super(`${provider}: ${message}`, { cause: opts.cause });
     this.name = "ProviderError";
     this.status = opts.status;
     this.retryable = opts.retryable ?? false;
+    this.retryAfterMs = opts.retryAfterMs;
   }
 }

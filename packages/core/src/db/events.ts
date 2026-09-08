@@ -1,3 +1,4 @@
+import { and, eq, gte, sql } from "drizzle-orm";
 import { type Event, events } from "../schema/index.js";
 import type { DbLike } from "./client.js";
 
@@ -24,4 +25,18 @@ export async function appendEvent(db: DbLike, input: AppendEventInput): Promise<
     .returning();
   if (!row) throw new Error("insert returned no row");
   return row;
+}
+
+/**
+ * Tokens spent on one provider since `since`, across all organizations — provider caps
+ * are per API key, not per tenant. Reads the `llm.usage` events the budget store writes.
+ */
+export async function sumLlmUsageSince(db: DbLike, provider: string, since: Date): Promise<number> {
+  const [row] = await db
+    .select({
+      total: sql<number>`coalesce(sum((${events.payload}->>'totalTokens')::int), 0)`.mapWith(Number),
+    })
+    .from(events)
+    .where(and(eq(events.type, "llm.usage"), eq(events.entityId, provider), gte(events.createdAt, since)));
+  return row?.total ?? 0;
 }
