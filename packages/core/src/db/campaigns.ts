@@ -43,6 +43,14 @@ export async function listCampaigns(db: DbLike, orgId: string): Promise<Campaign
     .orderBy(desc(campaigns.createdAt));
 }
 
+/**
+ * Active campaigns across every organization — for the pipeline, a system actor.
+ * The second and last deliberate cross-org query (with findDueSourcesAllOrgs).
+ */
+export async function listActiveCampaignsAllOrgs(db: DbLike): Promise<Campaign[]> {
+  return db.select().from(campaigns).where(eq(campaigns.status, "active")).orderBy(campaigns.createdAt);
+}
+
 export async function getCampaign(db: DbLike, orgId: string, id: string): Promise<Campaign> {
   const [row] = await db
     .select()

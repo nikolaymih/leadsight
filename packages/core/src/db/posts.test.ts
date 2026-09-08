@@ -4,7 +4,7 @@ import { postSources, posts } from "../schema/index.js";
 import { createTestDb, type TestDb } from "../test/db.js";
 import { seedCampaign, seedLead, seedSource, TEST_ORG } from "../test/seed.js";
 import type { RawPost } from "../types.js";
-import { findUnscoredPosts, upsertPosts } from "./posts.js";
+import { findExtractionCandidates, upsertPosts } from "./posts.js";
 
 let t: TestDb;
 beforeEach(async () => {
@@ -62,15 +62,46 @@ describe("db/posts", () => {
     await seedLead(t.db, a, scoredPost);
 
     // Posts from one batch share a fetched_at, so their relative order is by uuid — arbitrary.
-    const unscored = await findUnscoredPosts(t.db, TEST_ORG, a.id);
+    const unscored = await findExtractionCandidates(t.db, TEST_ORG, a);
     expect(unscored.map((p) => p.externalId).sort()).toEqual(["t3_2", "t3_3"]);
 
-    expect(await findUnscoredPosts(t.db, TEST_ORG, a.id, 1)).toHaveLength(1);
-    expect(await findUnscoredPosts(t.db, "org_other", a.id)).toHaveLength(0);
+    expect(await findExtractionCandidates(t.db, TEST_ORG, a, 1)).toHaveLength(1);
+    expect(await findExtractionCandidates(t.db, "org_other", a)).toHaveLength(0);
+  });
+
+  it("pre-filters: keyword-scoped sources always qualify, others need a campaign keyword in the text", async () => {
+    const c = await seedCampaign(t.db); // keywords: cto, technical cofounder, mvp
+    const subreddit = await seedSource(t.db, c, {
+      kind: "reddit_subreddit",
+      config: { subreddit: "startups" },
+    });
+    const search = await seedSource(t.db, c); // reddit_search → keyword-scoped
+
+    await upsertPosts(t.db, TEST_ORG, subreddit.id, [
+      raw("hit-body", { body: "Looking for a CTO to build our app" }),
+      raw("hit-title", { title: "Need a technical cofounder", body: "details inside" }),
+      raw("miss", { body: "Show HN: my weekend project" }),
+      raw("like-chars", { body: "100% unrelated_text" }),
+    ]);
+    await upsertPosts(t.db, TEST_ORG, search.id, [raw("scoped", { body: "no keyword here at all" })]);
+
+    const ids = (await findExtractionCandidates(t.db, TEST_ORG, c)).map((p) => p.externalId).sort();
+    expect(ids).toEqual(["t3_hit-body", "t3_hit-title", "t3_scoped"]);
+
+    // No keywords at all: only keyword-scoped sources can contribute.
+    expect(
+      (await findExtractionCandidates(t.db, TEST_ORG, { id: c.id, keywords: [] })).map((p) => p.externalId),
+    ).toEqual(["t3_scoped"]);
+    // LIKE metacharacters in keywords are literal.
+    expect(
+      (await findExtractionCandidates(t.db, TEST_ORG, { id: c.id, keywords: ["100%"] }))
+        .map((p) => p.externalId)
+        .sort(),
+    ).toEqual(["t3_like-chars", "t3_scoped"]);
   });
 });
 
-function raw(id: string): RawPost {
+function raw(id: string, overrides: Partial<RawPost> = {}): RawPost {
   return {
     platform: "reddit",
     externalId: `t3_${id}`,
@@ -78,5 +109,6 @@ function raw(id: string): RawPost {
     body: `post ${id}`,
     bodyIsSnippet: false,
     raw: { id },
+    ...overrides,
   };
 }

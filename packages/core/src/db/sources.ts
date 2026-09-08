@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { NotFoundError, ValidationError } from "../errors.js";
 import { postSources, type Source, sources } from "../schema/index.js";
 import { type SourceConfig, sourceConfigSchema } from "../types.js";
@@ -124,6 +124,29 @@ export async function findDueSourcesAllOrgs(db: DbLike, now: Date = new Date()):
       ),
     )
     .orderBy(asc(sources.lastRunAt));
+}
+
+/** For manual "run now": the caller has already checked the source belongs to its org. */
+export async function listSourcesByIds(db: DbLike, ids: readonly string[]): Promise<Source[]> {
+  if (ids.length === 0) return [];
+  return db
+    .select()
+    .from(sources)
+    .where(inArray(sources.id, [...ids]));
+}
+
+/** Human label for run reports and the sources table: `r/startups`, `search "cto" in r/x`, `linkedin alerts`. */
+export function describeSource(source: Pick<Source, "kind" | "config">): string {
+  const c = source.config;
+  const str = (key: string) => (typeof c[key] === "string" ? (c[key] as string) : undefined);
+  switch (source.kind) {
+    case "reddit_subreddit":
+      return `r/${str("subreddit") ?? "?"}`;
+    case "reddit_search":
+      return `search "${str("query") ?? "?"}"${str("subreddit") ? ` in r/${str("subreddit")}` : ""}`;
+    case "rss":
+      return `${str("platform") ?? "web"} alerts`;
+  }
 }
 
 export async function recordSourceRun(db: DbLike, sourceId: string, run: SourceRunRecord): Promise<void> {
