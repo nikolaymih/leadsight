@@ -1,0 +1,117 @@
+---
+name: pipeline
+description: How the LeadSight ingestion and scoring pipeline works in packages/core — Source adapters (Reddit API, RSS/Google Alerts, hydrators for LinkedIn and X), the LLM Extractor with Groq→Gemini fallback and token budget, the rules engine, labels/few-shot, notifiers, and the scheduler loop. Load this for any task about polling, scraping, feeds, Reddit, RSS, Google Alerts, LinkedIn/X post fetching, LLM calls, prompts, extraction, scoring, evidence, verdicts, confidence, rescoring, Slack/email alerts, or the words "source", "adapter", "extractor", "provider", "budget", "batch", "cursor", "dedupe".
+---
+
+# Pipeline (packages/core)
+
+Read `docs/design.md` §3–§6 first; this skill is the implementation guide for it.
+
+```
+packages/core/src/
+  sources/    source.ts (interface), reddit-subreddit.ts, reddit-search.ts, rss.ts,
+              hydrate/linkedin.ts, hydrate/x.ts, registry.ts
+  extractor/  extractor.ts (interface), llm-extractor.ts, prompt.ts, providers/{groq,gemini}.ts,
+              budget.ts, fewshot.ts
+  rules/      index.ts (pure), tested
+  notify/     notifier.ts, slack.ts, email.ts
+  pipeline/   run.ts (orchestrates steps), prefilter.ts, dedupe.ts
+  db/         queries used by the pipeline (posts, leads, labels, events, sources)
+```
+
+## Sources
+
+- Implement the `Source<C>` interface from `docs/design.md`. `validateConfig` uses the Zod
+  schema from `@leadsight/contract` (`sourceConfigSchema`) — one definition.
+- `run(config, cursor)` is read-only and idempotent. Return `nextCursor` even on partial
+  failure so progress is never lost.
+- Never throw for a single bad item; push a warning and continue.
+- All HTTP via `fetch` with `AbortSignal.timeout(15_000)` and a fixed User-Agent from env.
+- **Reddit**: OAuth client-credentials flow (`client_credentials` grant, cached token with
+  expiry). Respect `X-Ratelimit-Remaining` / `X-Ratelimit-Reset` headers; if remaining < 5,
+  sleep until reset. Endpoints: `/r/{sub}/new.json?limit=100&before=<fullname>` and
+  `/search.json?q=...&sort=new&restrict_sr=1`. Cursor = newest `name` (fullname) seen.
+  Strip Reddit markdown lightly (links kept as text). Post body = `selftext`; skip
+  `[removed]`/`[deleted]`.
+- **RSS**: `rss-parser` over the Google Alerts feed. Items have title, link (wrapped in a
+  Google redirect — unwrap `url=` param), `published`, and a content snippet. Set
+  `bodyIsSnippet: true`, `platform` from config, `externalId` = canonical URL (strip
+  tracking params, lowercase host). Cursor = newest `published`.
+- **Hydrators** (`hydrate/`): given a `RawPost` with a snippet, try to fetch the full text.
+  - LinkedIn: GET the post URL with a crawler-like UA; parse the `<meta property="og:description">`
+    and the main text blocks. On auth wall (HTTP 999 or redirect to `/authwall`), keep the snippet.
+  - X: `https://publish.twitter.com/oembed?url=<post>&omit_script=true` → strip HTML from
+    `html`. Free, official, no auth.
+  - Facebook: no hydrator; snippet only.
+  Hydration is best-effort and never blocks scoring.
+- Register sources in `registry.ts` by `kind`. The pipeline resolves adapters through the
+  registry; nothing else imports adapters directly.
+
+## Dedupe and pre-filter
+
+- Insert posts with `onConflictDoNothing` on `(organization_id, platform, external_id)`.
+  Then link `post_sources`. A post seen by three sources is one row.
+- Pre-filter (`prefilter.ts`): a post is a scoring candidate for a campaign if the source
+  is keyword-scoped (`reddit_search`, `rss`) or the text contains any campaign keyword
+  (case-insensitive, word-boundary). Keep it a pure function with tests.
+
+## Extractor
+
+- `LlmExtractor` takes an ordered provider list. Each provider is an OpenAI-compatible
+  chat endpoint: Groq `https://api.groq.com/openai/v1`, Gemini
+  `https://generativelanguage.googleapis.com/v1beta/openai`. Model ids live in env
+  (`GROQ_MODEL`, `GEMINI_MODEL`), never in code.
+- One request scores a **batch** of 5–10 posts. Output is a JSON array validated with
+  `z.array(z.object({ id, evidence: evidenceSchema }))`. Use `response_format: { type: "json_object" }`
+  where supported and still validate.
+- Per-post validation: a malformed item is re-queued once (alone), then dropped with an
+  `events` row `extract.dropped`. Never let one bad item fail the batch.
+- Retry policy: on 429 or 5xx, retry once after the `Retry-After` (default 2s) on the same
+  provider, then fall through to the next provider. On 4xx other than 429, fail the batch
+  (it's our bug) and log the response body.
+- **Budget** (`budget.ts`): count prompt+completion tokens from the response `usage` per
+  provider per day in `events` (`llm.usage`). Before each batch, if used > 90% of that
+  provider's configured daily cap (`GROQ_DAILY_TOKENS`), skip it. If every provider is
+  over budget, stop extracting and leave posts unscored for the next run — do not drop them.
+- The model never sees weights or thresholds. It receives criteria as `{key, question, type, options}`.
+- Prompt template lives in `prompt.ts` with `PROMPT_VERSION = "2026-09-08.1"`. Bump it on
+  any wording change; it's stored on every lead.
+
+## Few-shot
+
+- `fewshot.ts`: load up to `campaign.fewshotLimit` most recent labels for the campaign,
+  balanced positive/negative where possible, join to the post text, truncate each to ~600
+  chars. Format as examples before the posts to score. Tested with fixtures.
+
+## Rules
+
+- `applyRules` is pure and already tested. Pipeline step "score" calls it and writes
+  `score`, `scoreBreakdown`, `confidence`, `verdict`, `rulesVersion`.
+- Rescore = rules only over stored evidence, in batches of 500, in a transaction per batch.
+
+## Notifiers
+
+- `SlackWebhookNotifier`: one message per campaign per run, listing up to 10 leads with
+  verdict, score, summary, link. Silent when nothing qualifies.
+- `EmailDigestNotifier`: same content, once a day, via the configured SMTP (`nodemailer`).
+- Never notify `insufficient` or `disqualified`.
+
+## Pipeline run
+
+`pipeline/run.ts` exports `runPipeline({ db, logger, registry, extractor, notifiers, now })`.
+Steps in order, each returning counts, each wrapped so a failure is recorded and the next
+step still runs on whatever succeeded:
+
+1. poll due sources → 2. dedupe/insert → 3. prefilter → 4. hydrate → 5. extract → 6. score → 7. notify → 8. write `pipeline.run` event with all counts + per-source breakdown.
+
+Idempotent: running twice in a row does no duplicate work (cursors, dedupe, unscored-only extraction).
+
+## Testing
+
+- Adapters: fixtures in `src/test/fixtures/<source>/` recorded from real responses (scrub
+  nothing sensitive — they're public posts). Use `msw` or an injected `fetch` to serve them.
+- Extractor: inject a fake provider returning canned JSON; test batching, validation,
+  fallback, and budget behavior. Never call a real LLM in tests.
+- Pipeline: integration test against the test DB with fake adapters end-to-end.
+- Manual run: `pnpm --filter @leadsight/core exec tsx scripts/run-source.ts <sourceId>`
+  for debugging a source against the live network.

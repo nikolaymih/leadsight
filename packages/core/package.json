@@ -1,0 +1,30 @@
+{
+  "name": "@leadsight/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./schema": "./dist/schema/index.js",
+    "./rules": "./dist/rules/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.0",
+    "postgres": "^3.4.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
