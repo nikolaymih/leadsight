@@ -54,7 +54,8 @@ pnpm install
 pnpm lint            biome check (format + lint)   — must pass before commit
 pnpm typecheck       build packages (emits dist types), then tsc --noEmit across workspaces — must pass before commit
 pnpm test            vitest across workspaces      — must pass before commit
-                     apps/api tests hit a real Postgres: `docker compose up db && pnpm db:migrate` first
+                     DB tests (core + api) need a reachable Postgres (`docker compose up db`); each test
+                     gets its own database cloned from a migrated template, so no manual migrate is needed
 pnpm db:generate     drizzle-kit generate (needs DATABASE_URL)
 pnpm db:migrate      drizzle-kit migrate (needs DATABASE_URL)
 pnpm dev:api         tsx watch apps/api            (reads the root .env — copy .env.example)
@@ -106,7 +107,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 ## Next steps (in order — update this list as you complete items)
 
 1. ~~`apps/api` skeleton: env.ts, app.ts, server.ts, db plugin, Better Auth plugin, oRPC plugin with a stub router, health route. `docker-compose.yml`. First migration generated and applied.~~ Done — `apps/api/src`, `packages/core/drizzle/0000_init.sql`.
-2. `packages/core/src/errors.ts`, `db/` query module, `test/db.ts` (`withTestDb`) and seed helpers.
+2. ~~`packages/core/src/errors.ts`, `db/` query module, `test/db.ts` (`withTestDb`) and seed helpers.~~ Done — `packages/core/src/{errors.ts,db/,test/}`, `@leadsight/core/test`.
 3. Sources: interface, registry, `RedditSubredditSource`, `RedditSearchSource`, `RssSource`, hydrators. Fixture-based tests.
 4. Extractor: providers, budget, few-shot, `LlmExtractor` with fake-provider tests. Prompt v1.
 5. Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.

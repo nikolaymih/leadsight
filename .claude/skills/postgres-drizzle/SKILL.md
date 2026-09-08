@@ -10,7 +10,9 @@ The DB client is created once in `apps/api/src/plugins/db.ts` and passed down.
 
 ## Schema changes — the only workflow
 
-1. Edit `packages/core/src/schema/index.ts` (or `auth.ts` for Better Auth tables).
+1. Edit `packages/core/src/schema/tables.ts` (business tables) or `auth.ts` (Better Auth
+   tables). `relations.ts` holds `relations()`; `index.ts` is only the barrel — relations
+   must import tables from their own module or the ESM cycle throws at load.
 2. `pnpm db:generate` → creates `drizzle/NNNN_<name>.sql` + snapshot. Name it:
    `pnpm --filter @leadsight/core exec drizzle-kit generate --name add_lead_confidence`.
 3. Open the generated SQL. Fix anything the diff got wrong (renames become drop+add —
@@ -79,33 +81,78 @@ await db.transaction(async (tx) => {
 - Define `relations()` for anything you read with `with:`. Keep them in
   `schema/relations.ts` and export from the schema barrel.
 - Batch inserts: chunk at 500 rows.
-- Cursor pagination for the inbox, not offset. Cursor = base64 of `(score, scoredAt, id)`
-  for rank sort; `(scoredAt, id)` for newest. Encode/decode in one helper in core.
+- Cursor pagination for the inbox, not offset. `db/cursor.ts` has `encodeCursor`,
+  `decodeCursor(cursor, zodSchema)` (throws `ValidationError`) and `keysetAfter(parts)`,
+  which builds the `(k1 > v1) OR (k1 = v1 AND k2 > v2) …` predicate. Rank sort keys on
+  `(verdict, score, scoredAt, id)`, newest on `(scoredAt, id)`, confidence on
+  `(confidence, scoredAt, id)`. `scoredAt` travels in the cursor as Postgres' own text
+  form (`::text`) and comes back with `::timestamptz` — a JS `Date` truncates to
+  milliseconds and would skip or repeat rows on ties.
+- Raw `sql` template parameters bypass Drizzle's column mapping: pass a `Date` as
+  `${d.toISOString()}::timestamptz`, never the Date object (postgres.js rejects it).
 - Never build SQL strings. Use `sql` template only for things Drizzle can't express, and
   keep those in `packages/core/src/db/raw.ts` with a comment why.
 - `jsonb` filtering: `sql\`${leads.evidence}->'disqualifier_hits' <> '[]'::jsonb\``. Add a
   GIN index only if such filters become hot.
 
+## Query module (`packages/core/src/db/`)
+
+One file per noun: `campaigns.ts`, `sources.ts`, `posts.ts`, `leads.ts` (list/detail/triage/
+notes), `labels.ts`, `events.ts`, plus `client.ts` (`Db`, `Tx`, `DbLike`, `createDb`) and
+`cursor.ts`. Barrel in `index.ts`, re-exported from the package root.
+
+- Every function takes `(db: DbLike, orgId: string, …)` and filters by `organization_id`.
+  `DbLike` is `Db | Tx`, so callers can compose functions inside `db.transaction`.
+- Tables without an `organization_id` (`labels`, `lead_notes`, `post_sources`) are scoped by
+  joining their parent (`campaigns`, `leads`, `sources`) on the org. Never expose them unscoped.
+- The single exception is `findDueSourcesAllOrgs`: the scheduler is a system actor, not a
+  request. It is named so nobody mistakes it for a request-scoped query, and the pipeline
+  carries each source's own `organizationId` forward from there.
+- Missing rows throw `NotFoundError(entity, id)`; bad input throws `ValidationError` after a
+  Zod parse (`criteriaSchema`, `thresholdsSchema`, `sourceConfigSchema` — all in core's
+  `types.ts`). The API maps both in one place. Functions return rows or joined row shapes,
+  never wire shapes; mapping to the contract happens in `apps/api`.
+- Writes return the row (`.returning()`); a missing row after `returning()` is a bug, so it
+  throws a plain `Error`.
+- `upsertLead` overwrites scoring fields on `(campaign_id, post_id)` conflict and leaves
+  triage state (`status`, `assignee_id`) alone. `updateLead`/`bulkUpdateLeads` write the
+  `labels` feedback row (won → positive, lost/not_fit → negative) inside the same
+  transaction, replacing any earlier label for that (campaign, post).
+
 ## Connection
 
-- `postgres` (postgres.js) driver, single pool created in `plugins/db.ts`:
-  `postgres(env.DATABASE_URL, { max: 10, idle_timeout: 20 })`.
-- `drizzle(client, { schema })` so the relational API works.
-- Close on `app.close()`.
+- `createDb(url, { max })` in `packages/core/src/db/client.ts` owns the postgres.js pool and
+  the Drizzle instance (`drizzle(client, { schema })` so the relational API works). It
+  returns `{ db, close }`; `apps/api/src/plugins/db.ts` calls it once and closes on
+  `app.close()`. Nothing else constructs a pool.
 - Migrations run via `drizzle-kit migrate` in the deploy step, not at app boot, so a bad
   migration doesn't take the API down mid-rollout.
 
 ## Testing with a real database
 
 - Integration tests use a real Postgres, never mocks. Locally: `docker compose up db`
-  (see `docker-compose.yml`). CI: a Postgres service container.
-- `packages/core/src/test/db.ts` exports `withTestDb(fn)`: creates a schema-per-test
-  (`CREATE SCHEMA test_<uuid>`), sets `search_path`, runs migrations into it, runs `fn`,
-  drops the schema. Tests are parallel-safe and leave nothing behind.
-- Option for CI speed later: PGlite (in-process Postgres) behind the same `withTestDb`
-  helper. Not the default — real Postgres catches extension/plan differences PGlite hides.
-- Seed helpers in `packages/core/src/test/seed.ts`: `seedCampaign(db, overrides)`,
-  `seedPost`, `seedLead`. Use them instead of hand-written inserts in tests.
+  (see `docker-compose.yml`). CI: a Postgres service container. The connection role needs
+  `CREATEDB` (the compose user is a superuser).
+- **One database per test**, from `@leadsight/core/test` (`packages/core/src/test/db.ts`):
+  `createTestDb()` returns `{ db, url, name, close }`; `withTestDb(fn)` wraps it. Each call
+  runs `CREATE DATABASE … TEMPLATE leadsight_tpl_<hash>` where the template has the
+  committed migrations applied. `close()` drops the database (`WITH (FORCE)`). Tests are
+  parallel-safe across vitest workers and leave nothing behind except the template.
+  - Why not schema-per-test: drizzle-kit qualifies enum types and FK targets with
+    `"public"`, so a second schema collides on `CREATE TYPE`.
+  - The template name hashes `drizzle/meta/_journal.json`; a new migration produces a new
+    template automatically and stale ones are dropped. Creation is serialised with a
+    Postgres advisory lock. Nothing ever needs a manual `db:migrate` before `pnpm test`.
+  - Pattern: `beforeEach(async () => { t = await createTestDb() })` /
+    `afterEach(() => t.close())`. For an app under test, pass `t.url` as `DATABASE_URL`
+    and drop it in an `onClose` hook (see `apps/api/src/test/helpers.ts`).
+- Option for CI speed later: PGlite (in-process Postgres) behind the same helpers. Not the
+  default — real Postgres catches extension/plan differences PGlite hides.
+- Seed helpers in `packages/core/src/test/seed.ts`: `seedUser`, `seedCampaign(db, overrides)`,
+  `seedSource(db, campaign, overrides)`, `seedPost`, `seedLead(db, campaign, post, overrides)`
+  (scored with the real rules). `TEST_ORG` / `TEST_USER` constants. Use them instead of
+  hand-written inserts in tests. Fixtures (`fixtures.ts`) hold the two example campaigns'
+  criteria and evidence — the only place offer-specific text is allowed.
 
 ## Local dev
 

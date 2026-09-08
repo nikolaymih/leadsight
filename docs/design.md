@@ -487,6 +487,13 @@ All routes scoped by the active organization from the session.
 - Session cookie cache: enabled for the web app, but the API always reads the
   session from the database when building the request context. The active
   organization is the tenant boundary and must never be served stale.
+- Test isolation: one Postgres database per test, cloned from a template with
+  the committed migrations applied (`CREATE DATABASE … TEMPLATE`). Schema-per-
+  test was rejected because generated migrations qualify enum types with
+  `public`. See the `postgres-drizzle` skill.
+- Labels: the newest label for a (campaign, post) is the one that counts. A
+  later won/lost/not_fit decision replaces the earlier label rather than adding
+  a second row, so few-shot examples never contradict each other.
 - Scheduler: node-cron in-process for v1; move to BullMQ when a second worker
   is needed.
 - Keyword pre-filter on RSS: skip entirely (feeds are already keyword-scoped)

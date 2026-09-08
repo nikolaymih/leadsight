@@ -48,6 +48,9 @@ The server implements it, the web app consumes it, both are type-checked against
 - Outputs are wire shapes, not DB rows. Dates are ISO strings. Map in the procedure with a
   small `toCampaign(row)` helper in `apps/api/src/orpc/mappers.ts`; keep mappers pure.
 - Enums come from `@leadsight/core` `as const` arrays via `z.enum(...)`. Never retype them.
+  Likewise `criteriaSchema`, `thresholdsSchema`, `evidenceSchema` and `sourceConfigSchema`
+  are defined once in core's `types.ts`; the contract imports them and re-exports what the
+  web app needs (`sourceConfigSchema`), since `apps/web` must not import core.
 - Defaults live in the input schema (`.default(50)`) so the client can omit them.
 - Nothing organization-specific in inputs: the org comes from the session context, never
   from the client. A client that could pass `organizationId` could read another tenant.

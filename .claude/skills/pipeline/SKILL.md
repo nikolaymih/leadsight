@@ -16,13 +16,16 @@ packages/core/src/
   rules/      index.ts (pure), tested
   notify/     notifier.ts, slack.ts, email.ts
   pipeline/   run.ts (orchestrates steps), prefilter.ts, dedupe.ts
-  db/         queries used by the pipeline (posts, leads, labels, events, sources)
+  db/         queries (see postgres-drizzle skill). The pipeline uses: findDueSourcesAllOrgs,
+              recordSourceRun, upsertPosts, findUnscoredPosts, listRecentLabels, upsertLead, appendEvent
 ```
 
 ## Sources
 
-- Implement the `Source<C>` interface from `docs/design.md`. `validateConfig` uses the Zod
-  schema from `@leadsight/contract` (`sourceConfigSchema`) — one definition.
+- Implement the `Source<C>` interface from `docs/design.md`. `validateConfig` uses
+  `sourceConfigSchema` from core's `types.ts` — one definition, re-exported by the contract
+  for the web app. Core never imports the contract (the contract depends on core).
+  `RawPost` also lives in `types.ts`.
 - `run(config, cursor)` is read-only and idempotent. Return `nextCursor` even on partial
   failure so progress is never lost.
 - Never throw for a single bad item; push a warning and continue.
