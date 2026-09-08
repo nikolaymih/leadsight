@@ -119,3 +119,48 @@ export type LeadStatus = (typeof LEAD_STATUSES)[number];
 
 export const CAMPAIGN_STATUSES = ["active", "paused", "archived"] as const;
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
+
+// ---------------------------------------------------------------------------
+// Source configuration — one definition shared by the DB layer, the adapters and
+// the API contract (which re-exports it for the web app).
+// ---------------------------------------------------------------------------
+
+export const sourceConfigSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("reddit_subreddit"),
+    config: z.object({ subreddit: z.string().min(1), listing: z.enum(["new", "hot"]).default("new") }),
+  }),
+  z.object({
+    kind: z.literal("reddit_search"),
+    config: z.object({
+      query: z.string().min(1),
+      subreddit: z.string().nullable().default(null),
+      sort: z.enum(["new", "relevance"]).default("new"),
+    }),
+  }),
+  z.object({
+    kind: z.literal("rss"),
+    config: z.object({ url: z.string().url(), platform: z.enum(PLATFORMS) }),
+  }),
+]);
+
+export type SourceConfig = z.infer<typeof sourceConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// A post as produced by a source adapter, before it is stored. Platform-agnostic.
+// ---------------------------------------------------------------------------
+
+export interface RawPost {
+  platform: Platform;
+  externalId: string;
+  url: string;
+  authorHandle?: string;
+  authorUrl?: string;
+  title?: string;
+  body: string;
+  /** Only a search snippet was available; hydration may fill the body later. */
+  bodyIsSnippet: boolean;
+  postedAt?: Date;
+  /** Original payload, kept for debugging. */
+  raw: unknown;
+}

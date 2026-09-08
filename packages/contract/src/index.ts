@@ -4,11 +4,15 @@ import {
   evidenceSchema,
   LEAD_STATUSES,
   PLATFORMS,
+  sourceConfigSchema,
   thresholdsSchema,
   VERDICTS,
 } from "@leadsight/core";
 import { oc } from "@orpc/contract";
 import { z } from "zod";
+
+// Re-exported so apps/web can validate source forms without importing core.
+export { sourceConfigSchema };
 
 // ---------------------------------------------------------------------------
 // Shared schemas (wire shapes; DB rows are mapped to these in the api layer)
@@ -34,25 +38,6 @@ export const campaignSchema = z.object({
   createdAt: isoDate,
   updatedAt: isoDate,
 });
-
-export const sourceConfigSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("reddit_subreddit"),
-    config: z.object({ subreddit: z.string().min(1), listing: z.enum(["new", "hot"]).default("new") }),
-  }),
-  z.object({
-    kind: z.literal("reddit_search"),
-    config: z.object({
-      query: z.string().min(1),
-      subreddit: z.string().nullable().default(null),
-      sort: z.enum(["new", "relevance"]).default("new"),
-    }),
-  }),
-  z.object({
-    kind: z.literal("rss"),
-    config: z.object({ url: z.string().url(), platform: z.enum(PLATFORMS) }),
-  }),
-]);
 
 export const sourceSchema = z
   .object({
