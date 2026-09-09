@@ -8,7 +8,7 @@ import type { SourceKind } from "../types.js";
 // findExtractionCandidates) so filtered-out posts never occupy the batch window;
 // `matchesAnyKeyword` is the same rule in TypeScript, kept for tests and callers.
 
-export const KEYWORD_SCOPED_KINDS: readonly SourceKind[] = ["reddit_search", "rss"];
+export const KEYWORD_SCOPED_KINDS: readonly SourceKind[] = ["google_search", "reddit_search", "rss"];
 
 export function isKeywordScoped(kind: SourceKind): boolean {
   return KEYWORD_SCOPED_KINDS.includes(kind);

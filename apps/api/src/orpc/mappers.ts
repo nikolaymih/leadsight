@@ -60,6 +60,7 @@ export function toSource(row: SourceWithStats): SourceWire {
     lastRunAt: isoOrNull(row.lastRunAt),
     lastError: row.lastError,
     pollIntervalMin: row.pollIntervalMin,
+    activeHours: row.activeHours ?? null,
     postsLast24h: row.postsLast24h,
     ...typed,
   };

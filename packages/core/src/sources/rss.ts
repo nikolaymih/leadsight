@@ -3,8 +3,7 @@ import { z } from "zod";
 import { ProviderError } from "../errors.js";
 import type { RawPost } from "../types.js";
 import { type SourceConfigFor, validateSourceConfig } from "./config.js";
-import { hydrateLinkedIn } from "./hydrate/linkedin.js";
-import { hydrateX } from "./hydrate/x.js";
+import { hydratePost } from "./hydrate/index.js";
 import { REQUEST_TIMEOUT_MS, type Source, type SourceDeps, type SourceRunResult } from "./source.js";
 import { stripHtml } from "./text.js";
 import { canonicalUrl, unwrapGoogleRedirect } from "./url.js";
@@ -78,16 +77,7 @@ export function createRssSource(deps: SourceDeps): Source<RssConfig> {
       return result;
     },
 
-    async hydrate(post) {
-      switch (post.platform) {
-        case "linkedin":
-          return hydrateLinkedIn(post, deps);
-        case "x":
-          return hydrateX(post, deps);
-        default:
-          return post; // Facebook and generic web: snippet only
-      }
-    },
+    hydrate: (post) => hydratePost(post, deps),
   };
 }
 

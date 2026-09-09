@@ -6,7 +6,8 @@ import { listRecentLabels } from "../db/labels.js";
 import { type LeadWithPost, upsertLead } from "../db/leads.js";
 import { findExtractionCandidates, updatePostContent, upsertPosts } from "../db/posts.js";
 import { describeSource, findDueSourcesAllOrgs, listSourcesByIds, recordSourceRun } from "../db/sources.js";
-import { BudgetExhaustedError } from "../errors.js";
+import { BudgetExhaustedError, ProviderError } from "../errors.js";
+import { SEARCH_BACKOFF_MIN, type SearchBudget } from "../extractor/budget.js";
 import { EXTRACT_BATCH_SIZE, type Extractor } from "../extractor/extractor.js";
 import { selectFewShot } from "../extractor/fewshot.js";
 import type { Notifier } from "../notify/notifier.js";
@@ -14,6 +15,7 @@ import { applyRules } from "../rules/index.js";
 import type { Campaign, Post, Source } from "../schema/index.js";
 import type { SourceRegistry } from "../sources/registry.js";
 import type { RawPost } from "../types.js";
+import { isSourceDue } from "./schedule.js";
 
 // The pipeline run — docs/design.md §4. Each step is isolated: a failing source, batch
 // or notifier is recorded and the run continues with whatever succeeded. Idempotent:
@@ -32,6 +34,8 @@ export interface PipelineDeps {
   extractorFor(organizationId: string): Extractor;
   notifiers: readonly Notifier[];
   logger: PipelineLogger;
+  /** Google search query budget; google_search sources back off when it is nearly spent. */
+  searchBudget?: SearchBudget;
   now?: () => Date;
   /** Manual "run now": poll exactly these sources instead of the due ones. */
   sourceIds?: readonly string[];
@@ -116,10 +120,22 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineRunResult
   };
   let budgetExhausted = false;
 
-  // 1. Poll
-  const sources = deps.sourceIds
-    ? await listSourcesByIds(deps.db, deps.sourceIds)
-    : await findDueSourcesAllOrgs(deps.db, startedAt);
+  // 1. Poll. The SQL pre-selects on the shorter interval; the exact rule (active hours in the
+  // source's time zone, search back-off while the query budget is nearly spent) runs here.
+  let sources: Source[];
+  if (deps.sourceIds) {
+    sources = await listSourcesByIds(deps.db, deps.sourceIds);
+  } else {
+    const searchOk = deps.searchBudget ? await deps.searchBudget.canQuery() : true;
+    if (!searchOk) deps.logger.warn({}, "search query budget nearly spent: google_search sources back off");
+    sources = (await findDueSourcesAllOrgs(deps.db, startedAt)).filter((s) =>
+      isSourceDue(
+        s,
+        startedAt,
+        s.kind === "google_search" && !searchOk ? { minIntervalMin: SEARCH_BACKOFF_MIN } : {},
+      ),
+    );
+  }
   for (const source of sources) {
     await pollSource(deps, source, org(source.organizationId), now);
   }
@@ -175,6 +191,9 @@ async function pollSource(
     const adapter = deps.registry.get(source.kind);
     const config = adapter.validateConfig(source.config);
     const result = await adapter.run(config, source.cursor);
+    if (result.usage?.searchQueries && deps.searchBudget) {
+      await deps.searchBudget.record(source.organizationId, result.usage.searchQueries);
+    }
     const upserted = await upsertPosts(deps.db, source.organizationId, source.id, result.posts);
 
     summary.posts = upserted.inserted;
@@ -202,6 +221,15 @@ async function pollSource(
     const message = errorMessage(err);
     summary.error = message;
     acc.errors.push(`${summary.name}: ${message}`);
+    // A search request that got an HTTP answer counted against the quota even though it failed.
+    if (
+      source.kind === "google_search" &&
+      deps.searchBudget &&
+      err instanceof ProviderError &&
+      err.status !== undefined
+    ) {
+      await deps.searchBudget.record(source.organizationId, 1);
+    }
     // lastRunAt moves even on failure so a broken source waits its interval instead of hammering.
     await recordSourceRun(deps.db, source.id, { ranAt: now(), error: message });
     await appendEvent(deps.db, {
@@ -327,9 +355,7 @@ async function processCampaign(
 }
 
 async function hydrate(deps: PipelineDeps, post: Post, acc: OrgAccumulator): Promise<Post> {
-  const adapter = deps.registry.get("rss");
-  if (!adapter.hydrate) return post;
-  const hydrated = await adapter.hydrate(postToRaw(post));
+  const hydrated = await deps.registry.hydrate(postToRaw(post));
   if (hydrated.bodyIsSnippet && hydrated.body === post.body) return post;
 
   const patch = {
@@ -338,6 +364,7 @@ async function hydrate(deps: PipelineDeps, post: Post, acc: OrgAccumulator): Pro
     title: hydrated.title ?? post.title,
     authorHandle: hydrated.authorHandle ?? post.authorHandle,
     authorUrl: hydrated.authorUrl ?? post.authorUrl,
+    postedAt: post.postedAt ?? hydrated.postedAt ?? null,
   };
   await updatePostContent(deps.db, post.id, patch);
   acc.counts.hydrated += 1;

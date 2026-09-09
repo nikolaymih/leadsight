@@ -1,4 +1,5 @@
 import {
+  activeHoursSchema,
   CAMPAIGN_STATUSES,
   campaignDraftSchema,
   criteriaSchema,
@@ -17,6 +18,7 @@ import { z } from "zod";
 // web bundle never pulls in core's DB/LLM/Node code through the main barrel.
 // Re-exported so apps/web can validate forms without importing core.
 export {
+  activeHoursSchema,
   campaignDraftSchema,
   criteriaSchema,
   notificationSettingsSchema,
@@ -58,6 +60,8 @@ export const sourceSchema = z
     lastRunAt: isoDate.nullable(),
     lastError: z.string().nullable(),
     pollIntervalMin: z.number().int(),
+    /** Overnight slowdown; null polls on pollIntervalMin around the clock. */
+    activeHours: activeHoursSchema.nullable(),
     postsLast24h: z.number().int(),
   })
   .and(sourceConfigSchema);
@@ -221,7 +225,11 @@ export const contract = {
       .route({ method: "POST", path: "/campaigns/{campaignId}/sources" })
       .input(
         z
-          .object({ campaignId: id, pollIntervalMin: z.number().int().min(5).default(60) })
+          .object({
+            campaignId: id,
+            pollIntervalMin: z.number().int().min(5).default(60),
+            activeHours: activeHoursSchema.nullable().optional(),
+          })
           .and(sourceConfigSchema),
       )
       .output(sourceSchema),
@@ -233,6 +241,8 @@ export const contract = {
           id,
           enabled: z.boolean().optional(),
           pollIntervalMin: z.number().int().min(5).optional(),
+          /** `null` clears the schedule. */
+          activeHours: activeHoursSchema.nullable().optional(),
         }),
       )
       .output(sourceSchema),
@@ -316,6 +326,17 @@ export const contract = {
   },
 
   integrations: {
+    /** Google Programmable Search queries used today vs. the daily cap (google_search sources). */
+    searchBudget: base.route({ method: "GET", path: "/integrations/search-budget" }).output(
+      z.object({
+        configured: z.boolean(),
+        queriesUsedToday: z.number().int(),
+        dailyCap: z.number().int().nullable(),
+        /** Source kinds the API can run with its current credentials. */
+        enabledSourceKinds: z.array(z.string()),
+      }),
+    ),
+
     /** What the API can deliver, for the settings screen. Secrets never leave the API. */
     status: base.route({ method: "GET", path: "/integrations" }).output(
       z.object({

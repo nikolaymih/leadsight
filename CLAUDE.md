@@ -2,7 +2,8 @@
 
 Internal name. `leadsight.ai` is an existing competitor, so rename before any public release.
 
-Campaign-driven social lead finder. Sources (Reddit API, Google Alerts RSS) produce posts;
+Campaign-driven social lead finder. Sources (Google search over Reddit/LinkedIn/X public pages,
+Google Alerts RSS, optionally the Reddit API) produce posts;
 an LLM extracts evidence per campaign; a deterministic rules engine scores it; results land
 in a ranked inbox. Nothing offer-specific in code — campaigns are data.
 
@@ -23,7 +24,7 @@ cost of reading is small, the cost of drifting from conventions is a rewrite.
 | Endpoints, request/response shapes, API errors, the typed client               | `orpc-contract`             |
 | Fastify app, plugins, scheduler, health, CORS, logging, shutdown, auth mount   | `fastify`                   |
 | Login, sessions, users, orgs, members, invites, roles, cookies                  | `better-auth`               |
-| Sources, Reddit, RSS/Alerts, hydrators, LLM calls, prompts, extraction, scoring, budget, notifiers, pipeline run | `pipeline` |
+| Sources, Google search, Reddit, RSS/Alerts, hydrators, active hours, LLM calls, prompts, extraction, scoring, budgets, notifiers, pipeline run | `pipeline` |
 | Pages, components, forms, side panels, shortcuts, styling, shadcn, auth screens | `nextjs`                    |
 | Data fetching in the web app, mutations, cache, optimistic updates, tables      | `tanstack`                  |
 
@@ -44,7 +45,7 @@ packages/contract   oRPC contract: Zod wire schemas + routes. Consumed by api an
 apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client, SMTP mailer. (complete)
 apps/web            Next.js 15 App Router dashboard.                                  (complete; notifier settings await step 9)
 deploy/             compose.yml (db, migrate, api, web, caddy), Caddyfile, .env.example, README.md — single-host deploy
-docs/               design.md, ui-brief.md
+docs/               design.md, ui-brief.md, reddit-access.md (Reddit API ticket status; why search is primary)
 .claude/skills/     conventions per area (see router above)
 ```
 
@@ -122,4 +123,8 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 9. ~~Notifiers.~~ Done as **email digest only** (2026-09-09, user decision; Slack or another chat notifier deferred until wanted) — `packages/core/src/notify/{mailer,email}.ts`, `campaigns.notifications` jsonb (migration `0001`), `apps/api/src/{mailer.ts,plugins/mailer.ts}` (`SMTP_URL`/`SMTP_FROM`), `integrations.status`, recipients in campaign settings.
 10. ~~Deploy: Dockerfiles for api and web, compose for the hosting machine, migration step.~~ Done — `apps/{api,web}/Dockerfile`, `deploy/{compose.yml,Caddyfile,.env.example,README.md}`, `apps/api/src/migrate.ts` + core `runMigrations`. Verified without a Docker daemon (sandbox has none): the flattened API output migrates and serves, the Next standalone server serves; first real `docker compose up` still to be done on the host.
 
-All ten steps are done. Next: run the pipeline end-to-end with real credentials (Groq, Reddit) and replace hand-authored fixtures with recordings; zod 4 / Next 16 / react-table 9 upgrades; a chat notifier when wanted.
+All ten steps are done.
+
+**Source strategy update (2026-09-09).** The Reddit Data API needs manual approval that rarely comes (ticket filed, `docs/reddit-access.md`), so `google_search` (Google Programmable Search over each platform's public pages; `GOOGLE_CSE_KEY`/`GOOGLE_CSE_CX`, 100 free queries/day with a budget + 2 h back-off) is the primary source for Reddit, LinkedIn and X, Google Alerts RSS is the secondary net, and the `reddit_*` kinds are feature-flagged off unless credentials exist. Per-source `activeHours` slows polling overnight. Never scrape reddit.com for discovery.
+
+Next: run the pipeline end-to-end with real credentials (Groq, Google CSE) and replace hand-authored fixtures with recordings; zod 4 / Next 16 / react-table 9 upgrades; a chat notifier when wanted.

@@ -178,7 +178,7 @@ describe("source registry", () => {
       reddit: { clientId: "id", clientSecret: "secret" },
       fetch: deps([]).deps.fetch,
     });
-    expect(registry.kinds()).toEqual(["reddit_subreddit", "reddit_search", "rss"]);
+    expect(registry.kinds()).toEqual(["reddit_subreddit", "reddit_search", "rss", "google_search"]);
     for (const kind of registry.kinds()) expect(registry.get(kind).kind).toBe(kind);
     expect(() => registry.get("carrier_pigeon" as never)).toThrow(ValidationError);
   });

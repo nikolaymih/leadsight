@@ -5,12 +5,16 @@ import {
   createBudget,
   createCampaignDrafter,
   createDbBudgetStore,
+  createDbSearchBudgetStore,
   createEmailDigestNotifier,
   createGeminiProvider,
   createGroqProvider,
   createLlmExtractor,
+  createSearchBudget,
   createSourceRegistry,
+  DEFAULT_SEARCH_DAILY_QUERIES,
   type PipelineDeps,
+  type SearchBudget,
 } from "@leadsight/core";
 import fp from "fastify-plugin";
 import type { Env } from "../env.js";
@@ -21,6 +25,8 @@ import type { Env } from "../env.js";
 
 export type Pipeline = Omit<PipelineDeps, "sourceIds" | "maxCandidatesPerCampaign"> & {
   budget: Budget;
+  searchBudget: SearchBudget;
+  searchConfigured: boolean;
   /** Configured providers in fallback order. */
   providerNames: readonly string[];
   drafterFor(organizationId: string): CampaignDrafter;
@@ -38,12 +44,29 @@ export interface PipelinePluginOptions {
 
 export const pipelinePlugin = fp<PipelinePluginOptions>(
   async (app, { env }) => {
+    const searchBudget = createSearchBudget({
+      store: createDbSearchBudgetStore(app.db),
+      dailyCap: env.GOOGLE_CSE_DAILY_QUERIES ?? DEFAULT_SEARCH_DAILY_QUERIES,
+    });
+    const searchConfigured = Boolean(env.GOOGLE_CSE_KEY && env.GOOGLE_CSE_CX);
     const registry = createSourceRegistry({
       userAgent: env.REDDIT_USER_AGENT,
-      reddit: { clientId: env.REDDIT_CLIENT_ID ?? "", clientSecret: env.REDDIT_CLIENT_SECRET ?? "" },
+      // Optional and rarely approved (docs/reddit-access.md); reddit_* sources are disabled without it.
+      reddit:
+        env.REDDIT_CLIENT_ID && env.REDDIT_CLIENT_SECRET
+          ? { clientId: env.REDDIT_CLIENT_ID, clientSecret: env.REDDIT_CLIENT_SECRET }
+          : null,
+      google: searchConfigured ? { key: env.GOOGLE_CSE_KEY ?? "", cx: env.GOOGLE_CSE_CX ?? "" } : null,
+      canSearch: () => searchBudget.canQuery(),
     });
+    if (!searchConfigured) {
+      app.log.warn({}, "GOOGLE_CSE_KEY/GOOGLE_CSE_CX not set: google_search sources are disabled");
+    }
     if (!env.REDDIT_CLIENT_ID || !env.REDDIT_CLIENT_SECRET) {
-      app.log.warn({}, "REDDIT_CLIENT_ID/SECRET not set: reddit sources will fail until configured");
+      app.log.info(
+        {},
+        "Reddit API not configured: reddit_subreddit/reddit_search sources are disabled (optional)",
+      );
     }
 
     const providers: ChatProvider[] = [];
@@ -71,6 +94,8 @@ export const pipelinePlugin = fp<PipelinePluginOptions>(
       notifiers: [createEmailDigestNotifier({ db: app.db, mailer: app.mailer, webOrigin: env.WEB_ORIGIN })],
       logger: app.log,
       budget,
+      searchBudget,
+      searchConfigured,
       providerNames: providers.map((p) => p.name),
       extractorFor: (organizationId) => createLlmExtractor({ providers, budget, organizationId, log }),
       drafterFor: (organizationId) =>

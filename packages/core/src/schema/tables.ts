@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { Criteria, Evidence, NotificationSettings, Thresholds } from "../types.js";
+import type { ActiveHours, Criteria, Evidence, NotificationSettings, Thresholds } from "../types.js";
 import { CAMPAIGN_STATUSES, LEAD_STATUSES, PLATFORMS, SOURCE_KINDS, VERDICTS } from "../types.js";
 
 // Business tables. Better Auth's tables live in ./auth.ts; both are re-exported from
@@ -73,6 +73,8 @@ export const sources = pgTable(
     lastRunAt: timestamp("last_run_at", { withTimezone: true }),
     lastError: text("last_error"),
     pollIntervalMin: integer("poll_interval_min").default(60).notNull(),
+    /** Null = poll on pollIntervalMin around the clock. */
+    activeHours: jsonb("active_hours").$type<ActiveHours>(),
     ...timestamps,
   },
   (t) => [index("sources_campaign_idx").on(t.campaignId, t.enabled)],

@@ -1,9 +1,11 @@
 "use client";
 
+import { activeHoursSchema } from "@leadsight/contract";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Play, Timer, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import type { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,6 +17,9 @@ import { formatRelative } from "@/lib/format";
 import { orpc } from "@/lib/orpc";
 import { describeSourceConfig, SOURCE_KIND_LABEL } from "@/lib/sources";
 import type { Source } from "@/lib/types";
+
+type ActiveHours = z.infer<typeof activeHoursSchema>;
+
 import { cn } from "@/lib/utils";
 
 // Sources of the current campaign. Small list, so the table is plain markup (no TanStack
@@ -144,12 +149,12 @@ export function SourceTable({ sources, canManage }: { sources: Source[]; canMana
         </TableBody>
       </Table>
 
-      <IntervalDialog
+      <ScheduleDialog
         source={editing}
         onClose={() => setEditing(null)}
         pending={update.isPending}
-        onSave={(pollIntervalMin) =>
-          editing && update.mutate({ id: editing.id, pollIntervalMin }, { onSuccess: () => setEditing(null) })
+        onSave={(patch) =>
+          editing && update.mutate({ id: editing.id, ...patch }, { onSuccess: () => setEditing(null) })
         }
       />
 
@@ -199,7 +204,10 @@ function ErrorCell({ error }: { error: string | null }) {
   );
 }
 
-function IntervalDialog({
+type SchedulePatch = { pollIntervalMin: number; activeHours: ActiveHours | null };
+
+/** Poll interval plus the optional active-hours window (overnight slowdown). */
+function ScheduleDialog({
   source,
   onClose,
   onSave,
@@ -207,12 +215,37 @@ function IntervalDialog({
 }: {
   source: Source | null;
   onClose: () => void;
-  onSave: (minutes: number) => void;
+  onSave: (patch: SchedulePatch) => void;
   pending: boolean;
 }) {
-  const [value, setValue] = useState<string>("");
-  const minutes = Number.parseInt(value, 10);
-  const valid = Number.isInteger(minutes) && minutes >= 5;
+  const [minutes, setMinutes] = useState("");
+  const [useHours, setUseHours] = useState(false);
+  const [tz, setTz] = useState("");
+  const [from, setFrom] = useState("8");
+  const [to, setTo] = useState("23");
+  const [offInterval, setOffInterval] = useState("180");
+
+  const pollIntervalMin = Number.parseInt(minutes, 10);
+  const hours: ActiveHours = {
+    tz: tz.trim(),
+    from: Number.parseInt(from, 10),
+    to: Number.parseInt(to, 10),
+    offInterval: Number.parseInt(offInterval, 10),
+  };
+  const intervalValid = Number.isInteger(pollIntervalMin) && pollIntervalMin >= 5;
+  const hoursResult = useHours ? activeHoursSchema.safeParse(hours) : null;
+  const valid = intervalValid && (hoursResult === null || hoursResult.success);
+
+  function load() {
+    setMinutes(String(source?.pollIntervalMin ?? 60));
+    const ah = source?.activeHours ?? null;
+    setUseHours(ah !== null);
+    setTz(ah?.tz ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC");
+    setFrom(String(ah?.from ?? 8));
+    setTo(String(ah?.to ?? 23));
+    setOffInterval(String(ah?.offInterval ?? 180));
+  }
+
   return (
     <Dialog
       open={source !== null}
@@ -220,30 +253,96 @@ function IntervalDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent onOpenAutoFocus={() => setValue(String(source?.pollIntervalMin ?? 60))}>
-        <DialogTitle className="text-base font-semibold">Poll interval</DialogTitle>
+      <DialogContent onOpenAutoFocus={load}>
+        <DialogTitle className="text-base font-semibold">Schedule</DialogTitle>
         <DialogDescription className="mb-3 text-xs text-muted-foreground">
           {source ? describeSourceConfig(source) : ""} — how often the scheduler polls this source.
         </DialogDescription>
-        <Field
-          label="Minutes"
-          htmlFor="interval"
-          error={value !== "" && !valid ? "At least 5 minutes" : undefined}
-        >
-          <Input
-            id="interval"
-            type="number"
-            min={5}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            className="w-32"
-          />
-        </Field>
+        <div className="flex flex-col gap-3">
+          <Field
+            label="Poll every (minutes)"
+            htmlFor="interval"
+            error={minutes !== "" && !intervalValid ? "At least 5 minutes" : undefined}
+          >
+            <Input
+              id="interval"
+              type="number"
+              min={5}
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value)}
+              className="w-32"
+            />
+          </Field>
+          <div className="flex items-center gap-2 text-sm">
+            <Switch
+              checked={useHours}
+              onCheckedChange={setUseHours}
+              aria-label="Slow down outside active hours"
+            />
+            <span>Slow down outside active hours</span>
+          </div>
+          {useHours ? (
+            <div className="grid gap-3 sm:grid-cols-[1fr_80px_80px_110px]">
+              <Field label="Time zone" htmlFor="tz" hint="IANA name">
+                <Input
+                  id="tz"
+                  value={tz}
+                  onChange={(e) => setTz(e.target.value)}
+                  placeholder="Europe/Sofia"
+                />
+              </Field>
+              <Field label="From" htmlFor="from">
+                <Input
+                  id="from"
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+              </Field>
+              <Field label="To" htmlFor="to">
+                <Input
+                  id="to"
+                  type="number"
+                  min={0}
+                  max={24}
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </Field>
+              <Field label="Off-hours (min)" htmlFor="offInterval">
+                <Input
+                  id="offInterval"
+                  type="number"
+                  min={5}
+                  value={offInterval}
+                  onChange={(e) => setOffInterval(e.target.value)}
+                />
+              </Field>
+              {hoursResult && !hoursResult.success ? (
+                <p className="text-xs text-destructive sm:col-span-4">
+                  {hoursResult.error.issues
+                    .map((i) => `${i.path.join(".") || "hours"}: ${i.message}`)
+                    .join("; ")}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={!valid || pending} onClick={() => onSave(minutes)}>
+          <Button
+            disabled={!valid || pending}
+            onClick={() =>
+              onSave({
+                pollIntervalMin,
+                activeHours: useHours && hoursResult?.success ? hoursResult.data : null,
+              })
+            }
+          >
             Save
           </Button>
         </div>

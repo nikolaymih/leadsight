@@ -65,6 +65,7 @@ function adapter(kind: SourceKind, opts: FakeAdapterOptions = {}): SourceAdapter
 }
 
 function registry(adapters: Partial<Record<SourceKind, SourceAdapter>>): SourceRegistry {
+  const enabled = SOURCE_KINDS.filter((k) => adapters[k] !== undefined);
   return {
     get(kind) {
       const a = adapters[kind];
@@ -72,6 +73,10 @@ function registry(adapters: Partial<Record<SourceKind, SourceAdapter>>): SourceR
       return a;
     },
     kinds: () => SOURCE_KINDS,
+    enabledKinds: () => enabled,
+    isEnabled: (kind) => adapters[kind] !== undefined,
+    // Hydration is per platform in the real registry; the fake delegates to the rss adapter's hook.
+    hydrate: async (post) => (adapters.rss?.hydrate ? adapters.rss.hydrate(post) : post),
   };
 }
 

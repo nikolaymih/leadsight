@@ -1,10 +1,12 @@
 import type { DbLike } from "../db/client.js";
-import { appendEvent, sumLlmUsageSince } from "../db/events.js";
+import { appendEvent, sumLlmUsageSince, sumSearchUsageSince } from "../db/events.js";
 import type { TokenUsage } from "./extractor.js";
 
-// Daily token budget per provider. Caps are account-level (one API key per provider),
-// so usage is summed across organizations; the events still carry the org for analytics.
-// When the primary is near its cap we skip it for the day rather than silently failing.
+// Daily budgets, all per UTC day and account-level (one API key each), so usage is summed
+// across organizations; the events still carry the org for analytics.
+// - LLM tokens per provider: a provider at ≥ 90% of its cap is skipped for the day.
+// - Google Programmable Search queries: at ≥ 90% of the cap, google_search sources back off
+//   to SEARCH_BACKOFF_MIN until the counter resets at midnight UTC.
 
 export const BUDGET_SOFT_LIMIT = 0.9;
 
@@ -87,4 +89,87 @@ export function createMemoryBudgetStore(): BudgetStore & {
 
 export function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+// ---------------------------------------------------------------------------
+// Search queries (Google Programmable Search JSON API; free tier = 100 queries/day)
+// ---------------------------------------------------------------------------
+
+export const SEARCH_PROVIDER = "google_cse";
+/** Poll interval forced on google_search sources while the query budget is nearly spent. */
+export const SEARCH_BACKOFF_MIN = 120;
+export const DEFAULT_SEARCH_DAILY_QUERIES = 100;
+
+export interface SearchBudgetStore {
+  usedSince(since: Date): Promise<number>;
+  record(organizationId: string, queries: number): Promise<void>;
+}
+
+export interface SearchBudget {
+  /** False at ≥ 90% of the daily cap. Always true without a cap. */
+  canQuery(): Promise<boolean>;
+  record(organizationId: string, queries: number): Promise<void>;
+  status(): Promise<{ queriesUsedToday: number; dailyCap: number | null }>;
+}
+
+export interface SearchBudgetOptions {
+  store: SearchBudgetStore;
+  /** Queries per UTC day, or null for uncapped. */
+  dailyCap: number | null;
+  now?: () => Date;
+}
+
+export function createSearchBudget(opts: SearchBudgetOptions): SearchBudget {
+  const now = opts.now ?? (() => new Date());
+  const used = () => opts.store.usedSince(startOfUtcDay(now()));
+  return {
+    async canQuery() {
+      if (opts.dailyCap === null) return true;
+      return (await used()) < opts.dailyCap * BUDGET_SOFT_LIMIT;
+    },
+    record: (organizationId, queries) => opts.store.record(organizationId, queries),
+    async status() {
+      return { queriesUsedToday: await used(), dailyCap: opts.dailyCap };
+    },
+  };
+}
+
+/**
+ * The interval a google_search source should honour right now: its own while queries are
+ * available, otherwise the back-off (never shorter than its own).
+ */
+export function searchPollIntervalMin(pollIntervalMin: number, budgetOk: boolean): number {
+  return budgetOk ? pollIntervalMin : Math.max(pollIntervalMin, SEARCH_BACKOFF_MIN);
+}
+
+/** Usage lives in `events` as `search.usage` rows; no extra table. */
+export function createDbSearchBudgetStore(db: DbLike): SearchBudgetStore {
+  return {
+    usedSince: (since) => sumSearchUsageSince(db, SEARCH_PROVIDER, since),
+    async record(organizationId, queries) {
+      if (queries <= 0) return;
+      await appendEvent(db, {
+        organizationId,
+        type: "search.usage",
+        entityType: "provider",
+        entityId: SEARCH_PROVIDER,
+        payload: { provider: SEARCH_PROVIDER, queries },
+      });
+    },
+  };
+}
+
+export function createMemorySearchBudgetStore(now: () => Date = () => new Date()): SearchBudgetStore & {
+  entries: { at: Date; queries: number }[];
+} {
+  const entries: { at: Date; queries: number }[] = [];
+  return {
+    entries,
+    async usedSince(since) {
+      return entries.filter((e) => e.at >= since).reduce((s, e) => s + e.queries, 0);
+    },
+    async record(_organizationId, queries) {
+      entries.push({ at: now(), queries });
+    },
+  };
 }

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ProviderError } from "../errors.js";
 import { type ChainOptions, completeWithFallback, providerId, stripFences } from "../extractor/chain.js";
 import { addUsage, type TokenUsage } from "../extractor/extractor.js";
-import { type CampaignDraft, campaignDraftSchema } from "../types.js";
+import { type CampaignDraft, campaignDraftSchema, MAX_SEARCH_PHRASES } from "../types.js";
 import { fetchPages } from "./fetch-pages.js";
 import { buildDraftPrompt, type ChatMessage, DRAFT_PROMPT_VERSION, DRAFT_SYSTEM_PROMPT } from "./prompt.js";
 
@@ -120,7 +120,7 @@ export function normalizeDraft(raw: unknown): unknown {
     disqualifiers: stringArray(d.disqualifiers),
     keywords: stringArray(d.keywords),
     alertQueries: stringArray(d.alertQueries),
-    suggestedSources: Array.isArray(d.suggestedSources) ? d.suggestedSources : [],
+    suggestedSources: Array.isArray(d.suggestedSources) ? normalizeSources(d.suggestedSources) : [],
     thresholds: isRecord(d.thresholds) ? d.thresholds : { hot: 70, warm: 40 },
     criteria: Array.isArray(d.criteria) ? normalizeCriteria(d.criteria) : d.criteria,
   };
@@ -157,6 +157,28 @@ function normalizeCriteria(list: unknown[]): unknown[] {
     c.points = Object.fromEntries(options.map((o) => [o, Math.min(toInt(points[o]) ?? 0, weight)]));
   }
   return items;
+}
+
+/** google_search entries: tolerate a single phrase string, snake_case keys and over-long lists. */
+function normalizeSources(list: unknown[]): unknown[] {
+  return list.filter(isRecord).map((s) => {
+    if (s.kind !== "google_search" || !isRecord(s.config)) return s;
+    const c = s.config;
+    const phrases = stringArray(c.phrases ?? c.phrase ?? c.queries ?? c.query)
+      .map((p) => p.replace(/["“”]/g, "").trim())
+      .filter((p) => p.length > 0)
+      .slice(0, MAX_SEARCH_PHRASES);
+    const siteScope = c.siteScope ?? c.site_scope ?? c.site;
+    return {
+      kind: "google_search",
+      config: {
+        platform: c.platform,
+        phrases,
+        ...(typeof siteScope === "string" && siteScope.trim() ? { siteScope: siteScope.trim() } : {}),
+        lookback: typeof c.lookback === "string" ? c.lookback : "d1",
+      },
+    };
+  });
 }
 
 function snakeCase(key: string): string {

@@ -276,3 +276,54 @@ describe("leads", () => {
     await expect(member.leads.get({ id: randomUUID() })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
+
+describe("google_search sources and active hours", () => {
+  it("creates a google_search source, stores an active-hours schedule, and reports the search budget", async () => {
+    const campaign = await owner.campaigns.create({ ...draft, name: "Search", suggestedSources: [] });
+    const created = await owner.sources.create({
+      campaignId: campaign.id,
+      kind: "google_search",
+      config: {
+        platform: "reddit",
+        phrases: ["looking for a cto", "need a technical cofounder"],
+        siteScope: "reddit.com/r/startups",
+      },
+      activeHours: { tz: "Europe/Sofia", from: 8, to: 23, offInterval: 180 },
+    });
+    expect(created).toMatchObject({
+      kind: "google_search",
+      config: {
+        platform: "reddit",
+        phrases: ["looking for a cto", "need a technical cofounder"],
+        lookback: "d1",
+      },
+      activeHours: { tz: "Europe/Sofia", from: 8, to: 23, offInterval: 180 },
+    });
+
+    const cleared = await owner.sources.update({ id: created.id, activeHours: null });
+    expect(cleared.activeHours).toBeNull();
+
+    await expect(
+      owner.sources.update({
+        id: created.id,
+        activeHours: { tz: "Europe/Sofia", from: 8, to: 8, offInterval: 180 },
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(
+      owner.sources.create({
+        campaignId: campaign.id,
+        kind: "google_search",
+        config: { platform: "x", phrases: [] },
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    // No GOOGLE_CSE_* in the test env: the kind is disabled, and a manual run says why.
+    const budget = await member.integrations.searchBudget();
+    expect(budget).toMatchObject({ configured: false, queriesUsedToday: 0, dailyCap: 100 });
+    expect(budget.enabledSourceKinds).toEqual(["rss"]);
+    await expect(owner.sources.run({ id: created.id })).rejects.toMatchObject({
+      code: "BAD_GATEWAY",
+      message: expect.stringMatching(/GOOGLE_CSE_KEY/),
+    });
+  });
+});

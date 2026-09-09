@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { NotFoundError, ValidationError } from "../errors.js";
 import { postSources, type Source, sources } from "../schema/index.js";
-import { type SourceConfig, sourceConfigSchema } from "../types.js";
+import { type ActiveHours, activeHoursSchema, type SourceConfig, sourceConfigSchema } from "../types.js";
 import { getCampaign } from "./campaigns.js";
 import type { DbLike } from "./client.js";
 
@@ -14,12 +14,15 @@ export type CreateSourceInput = SourceConfig & {
   campaignId: string;
   pollIntervalMin?: number;
   enabled?: boolean;
+  activeHours?: ActiveHours | null;
 };
 
 export interface UpdateSourcePatch {
   enabled?: boolean;
   pollIntervalMin?: number;
   config?: Record<string, unknown>;
+  /** `null` clears the schedule. */
+  activeHours?: ActiveHours | null;
 }
 
 export interface SourceRunRecord {
@@ -78,6 +81,7 @@ export async function createSource(db: DbLike, orgId: string, input: CreateSourc
       config,
       pollIntervalMin: input.pollIntervalMin,
       enabled: input.enabled,
+      activeHours: validateActiveHours(input.activeHours),
     })
     .returning();
   if (!row) throw new Error("insert returned no row");
@@ -98,7 +102,13 @@ export async function updateSource(
 
   const [row] = await db
     .update(sources)
-    .set({ enabled: patch.enabled, pollIntervalMin: patch.pollIntervalMin, config, updatedAt: new Date() })
+    .set({
+      enabled: patch.enabled,
+      pollIntervalMin: patch.pollIntervalMin,
+      config,
+      activeHours: validateActiveHours(patch.activeHours),
+      updatedAt: new Date(),
+    })
     .where(and(eq(sources.organizationId, orgId), eq(sources.id, id)))
     .returning();
   if (!row) throw new NotFoundError("source", id);
@@ -118,6 +128,9 @@ export async function deleteSource(db: DbLike, orgId: string, id: string): Promi
  * organizations. The scheduler is a system actor, not a request: this is the one
  * deliberate exception to org-scoped queries, and the pipeline carries each source's
  * own organizationId forward from here.
+ *
+ * Sources with `activeHours` are selected on the shorter of their two intervals; the
+ * pipeline applies the exact rule (`isSourceDue`, which knows the time zone) on top.
  */
 export async function findDueSourcesAllOrgs(db: DbLike, now: Date = new Date()): Promise<Source[]> {
   return db
@@ -129,7 +142,7 @@ export async function findDueSourcesAllOrgs(db: DbLike, now: Date = new Date()):
         or(
           isNull(sources.lastRunAt),
           // Raw sql params skip Drizzle's column mapping, so the Date goes over as ISO text.
-          sql`${sources.lastRunAt} + make_interval(mins => ${sources.pollIntervalMin}) <= ${now.toISOString()}::timestamptz`,
+          sql`${sources.lastRunAt} + make_interval(mins => least(${sources.pollIntervalMin}, coalesce((${sources.activeHours}->>'offInterval')::int, ${sources.pollIntervalMin}))) <= ${now.toISOString()}::timestamptz`,
         ),
       ),
     )
@@ -150,6 +163,14 @@ export function describeSource(source: Pick<Source, "kind" | "config">): string 
   const c = source.config;
   const str = (key: string) => (typeof c[key] === "string" ? (c[key] as string) : undefined);
   switch (source.kind) {
+    case "google_search": {
+      const phrases = Array.isArray(c.phrases)
+        ? (c.phrases as unknown[]).filter((p) => typeof p === "string")
+        : [];
+      const first = phrases[0] ? `"${phrases[0]}"` : "?";
+      const more = phrases.length > 1 ? ` +${phrases.length - 1}` : "";
+      return `${str("platform") ?? "web"} search ${first}${more}${str("siteScope") ? ` in ${str("siteScope")}` : ""}`;
+    }
     case "reddit_subreddit":
       return `r/${str("subreddit") ?? "?"}`;
     case "reddit_search":
@@ -169,6 +190,18 @@ export async function recordSourceRun(db: DbLike, sourceId: string, run: SourceR
       updatedAt: new Date(),
     })
     .where(eq(sources.id, sourceId));
+}
+
+function validateActiveHours(value: ActiveHours | null | undefined): ActiveHours | null | undefined {
+  if (value === undefined || value === null) return value;
+  const result = activeHoursSchema.safeParse(value);
+  if (!result.success) {
+    throw new ValidationError(
+      "invalid activeHours",
+      result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+    );
+  }
+  return result.data;
 }
 
 function validateConfig(value: { kind: string; config: unknown }): SourceConfig {

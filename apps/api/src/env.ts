@@ -32,6 +32,10 @@ const envSchema = z
     REDDIT_CLIENT_ID: optionalString,
     REDDIT_CLIENT_SECRET: optionalString,
     REDDIT_USER_AGENT: z.string().default("leadsight/0.1"),
+    // Google Programmable Search (primary discovery source). Free tier: 100 queries/day.
+    GOOGLE_CSE_KEY: optionalString,
+    GOOGLE_CSE_CX: optionalString,
+    GOOGLE_CSE_DAILY_QUERIES: optionalInt,
     GROQ_API_KEY: optionalString,
     GROQ_MODEL: z.string().default("openai/gpt-oss-120b"),
     GROQ_DAILY_TOKENS: optionalInt,

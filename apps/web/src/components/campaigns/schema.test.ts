@@ -62,3 +62,26 @@ describe("alert queries → rss sources", () => {
     ]);
   });
 });
+
+describe("describeSourceConfig", () => {
+  it("summarises google_search sources", async () => {
+    const { describeSourceConfig } = await import("@/lib/sources");
+    expect(
+      describeSourceConfig({
+        kind: "google_search",
+        config: {
+          platform: "reddit",
+          phrases: ["looking for a cto", "need a cofounder"],
+          siteScope: "reddit.com/r/startups",
+          lookback: "d1",
+        },
+      }),
+    ).toBe("Reddit: “looking for a cto” +1 in reddit.com/r/startups");
+    expect(
+      describeSourceConfig({
+        kind: "google_search",
+        config: { platform: "x", phrases: ["hiring a cto"], lookback: "d1" },
+      }),
+    ).toBe("X: “hiring a cto”");
+  });
+});

@@ -1,6 +1,6 @@
 ---
 name: pipeline
-description: How the LeadSight ingestion and scoring pipeline works in packages/core — Source adapters (Reddit API, RSS/Google Alerts, hydrators for LinkedIn and X), the LLM Extractor with Groq→Gemini fallback and token budget, the rules engine, labels/few-shot, notifiers, and the scheduler loop. Load this for any task about polling, scraping, feeds, Reddit, RSS, Google Alerts, LinkedIn/X post fetching, LLM calls, prompts, extraction, scoring, evidence, verdicts, confidence, rescoring, Slack/email alerts, or the words "source", "adapter", "extractor", "provider", "budget", "batch", "cursor", "dedupe".
+description: How the LeadSight ingestion and scoring pipeline works in packages/core — Source adapters (Google Programmable Search as the primary source, RSS/Google Alerts, the optional Reddit API, per-platform hydrators for Reddit, LinkedIn and X), the LLM Extractor with Groq→Gemini fallback, the token and search-query budgets with back-off, active-hours scheduling, the rules engine, labels/few-shot, notifiers, and the scheduler loop. Load this for any task about polling, scraping, feeds, Google search, CSE, Reddit, RSS, Google Alerts, LinkedIn/X post fetching, LLM calls, prompts, extraction, scoring, evidence, verdicts, confidence, rescoring, email digests, or the words "source", "adapter", "extractor", "provider", "budget", "batch", "cursor", "dedupe", "active hours".
 ---
 
 # Pipeline (packages/core)
@@ -9,30 +9,39 @@ Read `docs/design.md` §3–§6 first; this skill is the implementation guide fo
 
 ```
 packages/core/src/
-  sources/    source.ts (Source, SourceDeps, SourceRunResult), registry.ts (createSourceRegistry),
-              config.ts (validateSourceConfig), text.ts + url.ts (pure helpers, tested),
-              reddit/{client,listing,subreddit,search}.ts, rss.ts, hydrate/{linkedin,x}.ts
+  sources/    source.ts (Source, SourceDeps, SourceRunResult), registry.ts (createSourceRegistry: kinds,
+              enabledKinds, hydrate), config.ts (validateSourceConfig), text.ts + url.ts (pure helpers, tested),
+              google/{query,client,search}.ts (primary), rss.ts, reddit/{client,listing,subreddit,search}.ts
+              (optional), hydrate/{index,reddit,linkedin,x}.ts
   extractor/  extractor.ts (Extractor, ExtractionInput/Result, EXTRACT_BATCH_SIZE), llm-extractor.ts
               (createLlmExtractor, parseResponse), prompt.ts (PROMPT_VERSION, SYSTEM_PROMPT, buildUserPrompt),
-              fewshot.ts (selectFewShot, formatExample), budget.ts (createBudget, createDbBudgetStore),
+              fewshot.ts (selectFewShot, formatExample), budget.ts (LLM token budget + search query budget),
               providers/{provider,openai-compatible,groq,gemini}.ts
   rules/      index.ts (pure), tested
   notify/     notifier.ts (contract), mailer.ts (transport contract), email.ts (digest)
-  pipeline/   run.ts (orchestrates steps), prefilter.ts, dedupe.ts
+  pipeline/   run.ts (orchestrates steps), prefilter.ts, schedule.ts (active hours, isSourceDue), dedupe.ts
   db/         queries (see postgres-drizzle skill). The pipeline uses: findDueSourcesAllOrgs,
               recordSourceRun, upsertPosts, findUnscoredPosts, listRecentLabels, upsertLead, appendEvent
 ```
 
 ## Sources
 
+Source strategy (2026-09-09): **`google_search` is the primary source** for Reddit, LinkedIn
+and X; `rss` (Google Alerts) is the free secondary net; the Reddit API kinds are optional and
+disabled without credentials (`docs/reddit-access.md`). Never scrape reddit.com for
+discovery; the only reddit.com GETs are single public post pages during hydration.
+
 - Implement the `Source<C>` interface from `docs/design.md`. `validateConfig` uses
   `sourceConfigSchema` from core's `types.ts` — one definition, re-exported by the contract
   for the web app. Core never imports the contract (the contract depends on core).
   `RawPost` also lives in `types.ts`.
 - Adapters get their outside world through `SourceDeps` (`fetch`, `userAgent`, `now`, `sleep`,
-  Reddit credentials) at construction — `createSourceRegistry({ userAgent, reddit, fetch? })`
-  builds them all. `run(config, cursor)` therefore keeps the shape in design.md and tests
-  inject a fake fetch. Never reach for the global `fetch` inside an adapter.
+  Reddit credentials) at construction — `createSourceRegistry({ userAgent, google?, reddit?,
+  canSearch?, fetch? })` builds them all. A kind without credentials is registered as a
+  *disabled* adapter (config validates, `run` throws a non-retryable `ProviderError` naming the
+  missing env; `registry.enabledKinds()` / `isEnabled(kind)` tell the API and the UI). `run(config,
+  cursor)` therefore keeps the shape in design.md and tests inject a fake fetch. Never reach for
+  the global `fetch` inside an adapter.
 - `run(config, cursor)` is read-only and idempotent. Return `nextCursor` even on partial
   failure so progress is never lost. A whole-request failure (auth, 5xx after retry, bad
   feed) throws `ProviderError`; the pipeline records it in `sources.last_error`.
@@ -40,7 +49,18 @@ packages/core/src/
   is Zod-parsed item by item (`redditPostSchema`, oEmbed).
 - All HTTP via `deps.fetch` with `AbortSignal.timeout(REQUEST_TIMEOUT_MS)` and the
   User-Agent from deps.
-- **Reddit**: OAuth client-credentials flow (`client_credentials` grant, cached token with
+- **Google search** (`google/`): `query.ts` is pure and tested — `buildSearchQuery` →
+  `site:<scope> ("p1" OR "p2" …)` (phrases trimmed, de-quoted, deduped, max 10; scope from
+  config or `DEFAULT_SITE_SCOPE[platform]`, none for `web`), `searchRequestUrl` (`num=10`,
+  `dateRestrict=<lookback>`, `sort=date`), `isPostUrl(platform, url)` (only `/comments/`,
+  `/posts/`|`/pulse/`, `/status/`, facebook post paths), `resultToRawPost` (snippet post,
+  `externalId = canonicalUrl(link)`, date from pagemap metatags). `client.ts` does one GET per
+  page and maps errors (403 `dailyLimitExceeded` / 429 → non-retryable quota error, 5xx
+  retryable, network wrapped). `search.ts` runs page 1, page 2 only if page 1 had 10 results
+  and the budget gate still says yes; a page-2 failure is a warning, a page-1 failure throws.
+  It reports `usage.searchQueries` (0–2) and, when `canQuery()` is false, returns nothing with
+  `BUDGET_SKIP_WARNING`. Adapters never touch the DB: the **pipeline** books usage.
+- **Reddit** (optional): OAuth client-credentials flow (`client_credentials` grant, cached token with
   expiry). Respect `X-Ratelimit-Remaining` / `X-Ratelimit-Reset` headers; if remaining < 5,
   sleep until reset. Endpoints: `/r/{sub}/new.json?limit=100&before=<fullname>` and
   `/search.json?q=...&sort=new&restrict_sr=1`. `reddit/client.ts` owns the token cache
@@ -57,12 +77,16 @@ packages/core/src/
   `url.ts`). The `url` column keeps the original target. Cursor `{ newestPublished: ISO }`.
   Parse with `parser.parseString(text)` on a body fetched through `deps.fetch`, never
   `parseURL` (it would bypass the injected fetch).
-- **Hydrators** (`hydrate/`): given a `RawPost` with a snippet, try to fetch the full text.
+- **Hydrators** (`hydrate/`): per **platform**, shared by every source kind, reached through
+  `registry.hydrate(post)` (`hydratePost` in `hydrate/index.ts`; a full post is returned as is).
+  - Reddit: GET the post page with a crawler-like UA (public HTML, never the API, never
+    listings); read `<shreddit-post author created-timestamp post-title>` and the
+    `slot="text-body"` / `.md` block, `og:description` as fallback. 403/429 keeps the snippet.
   - LinkedIn: GET the post URL with a crawler-like UA; parse the `<meta property="og:description">`
     and the main text blocks. On auth wall (HTTP 999 or redirect to `/authwall`), keep the snippet.
   - X: `https://publish.twitter.com/oembed?url=<post>&omit_script=true` → strip HTML from
     `html`. Free, official, no auth.
-  - Facebook: no hydrator; snippet only.
+  - Facebook / web: no hydrator; snippet only.
   Hydration is best-effort and never blocks scoring.
 - Register sources in `registry.ts` by `kind`. The pipeline resolves adapters through the
   registry; nothing else imports adapters directly.
@@ -72,7 +96,7 @@ packages/core/src/
 - Insert posts with `onConflictDoNothing` on `(organization_id, platform, external_id)`.
   Then link `post_sources`. A post seen by three sources is one row.
 - Pre-filter (`pipeline/prefilter.ts`): a post is a scoring candidate for a campaign if
-  the source is keyword-scoped (`reddit_search`, `rss`) or title+body contains any campaign
+  the source is keyword-scoped (`google_search`, `reddit_search`, `rss`) or title+body contains any campaign
   keyword (case-insensitive substring; `escapeLike` keeps `%`/`_` literal). It runs **inside
   the candidate query** (`findExtractionCandidates` → `candidateCondition`) so filtered
   posts never occupy the oldest-first batch window; `isCandidate` is the same rule in TS,
@@ -108,6 +132,15 @@ packages/core/src/
   uncapped providers always pass. When every provider is over budget the extractor throws
   `BudgetExhaustedError` — the pipeline must catch it and leave posts unscored, not drop them.
   `budget.status(provider)` feeds `runs.budget`.
+- **Search budget** (same file): `createSearchBudget({ store, dailyCap })` over a
+  `SearchBudgetStore`; `createDbSearchBudgetStore(db)` writes `search.usage` events
+  (`entityId` = `google_cse`, payload `{ queries }`) and sums them from the start of the UTC
+  day. `canQuery()` is false at ≥ 90% of `GOOGLE_CSE_DAILY_QUERIES` (default 100 = free
+  tier). The registry passes `canQuery` to the search adapter as its gate; the pipeline
+  records `usage.searchQueries` after each run (and 1 for a failed request that got an HTTP
+  answer) and, while `canQuery()` is false, only polls `google_search` sources whose last run
+  is ≥ `SEARCH_BACKOFF_MIN` (120) minutes old — so they back off to 2 h until midnight UTC.
+  `searchPollIntervalMin(base, ok)` is the pure form; `integrations.searchBudget` reports it.
 - Few-shot: `selectFewShot(labels, limit)` alternates positive/negative from newest;
   `formatExample` truncates to 600 chars and appends the reviewer note. The pipeline loads
   labels with `listRecentLabels` and passes the selection in `ExtractionInput.examples`.
@@ -172,12 +205,16 @@ re-asked once with the issues; a second failure throws a non-retryable `Provider
 `extractorFor` exists because budget usage events are recorded per organization.
 `sourceIds` makes it a manual run (poll exactly those, due or not).
 
-1. poll due sources (`findDueSourcesAllOrgs`, or `listSourcesByIds`) → `upsertPosts`,
-   `recordSourceRun` (lastRunAt moves even on failure so a broken source waits its interval),
+1. poll due sources (`findDueSourcesAllOrgs` pre-selects in SQL on the shorter of
+   `pollIntervalMin` and `activeHours.offInterval`; `isSourceDue` in `pipeline/schedule.ts`
+   then applies the exact rule — normal interval inside `[from, to)` local hours of
+   `activeHours.tz`, `offInterval` outside, plus the search back-off floor — or
+   `listSourcesByIds` for a manual run) → `upsertPosts`, `recordSourceRun` (lastRunAt moves
+   even on failure so a broken source waits its interval), book `usage.searchQueries`,
    `source.run` / `source.error` event per source.
 2. for every active campaign (`listActiveCampaignsAllOrgs`): `findExtractionCandidates`
-   (pre-filter included, oldest first, capped at 40) → hydrate snippet posts through the
-   `rss` adapter and `updatePostContent` → extract in `EXTRACT_BATCH_SIZE` batches with
+   (pre-filter included, oldest first, capped at 40) → hydrate snippet posts through
+   `registry.hydrate` and `updatePostContent` → extract in `EXTRACT_BATCH_SIZE` batches with
    few-shot from `listRecentLabels` → `applyRules` + `upsertLead` → notify each notifier
    with new leads at or above `minScoreAlert` (never insufficient/disqualified).
 3. one `pipeline.run` event **per organization touched**, payload = `OrgRunReport`
@@ -202,8 +239,12 @@ extractor and notifiers — extend that test when you add a step.
   `respond: Response[]` sequence drives retry scenarios, `loadFixture(path)` reads
   `src/test/fixtures/<source>/…`. No msw (not approved), no live network.
   The current fixtures are hand-authored from the documented payload shapes — the
-  scaffolding sandbox had no egress — so replace them with real recordings once Reddit
-  credentials exist (public posts; nothing to scrub) and keep them small.
+  scaffolding sandbox had no egress — so replace them with real recordings once credentials
+  exist (Google CSE first; Reddit only if the API is ever approved) and keep them small.
+- Pure helpers have their own tests: `google/query.test.ts` (query building, URL filter,
+  result mapping), `google/search.test.ts` (paging, budget gate, error handling, registry
+  flags), `extractor/budget.test.ts` (token and search budgets, back-off),
+  `pipeline/schedule.test.ts` (active hours, due rule), `hydrate/reddit.test.ts`.
 - Extractor: inject a fake provider returning canned JSON; test batching, validation,
   fallback, and budget behavior. Never call a real LLM in tests.
 - Pipeline: integration test against the test DB with fake adapters end-to-end.

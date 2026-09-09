@@ -9,6 +9,8 @@ export interface SourceRunResult {
   /** Opaque, persisted to sources.cursor. Return it even on partial failure. */
   nextCursor: unknown;
   warnings: string[];
+  /** Metered external calls made by this run; the pipeline books them against the budget. */
+  usage?: { searchQueries: number };
 }
 
 export interface Source<C = unknown> {

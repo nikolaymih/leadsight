@@ -121,8 +121,18 @@ export type Evidence = z.infer<typeof evidenceSchema>;
 export const PLATFORMS = ["reddit", "linkedin", "x", "facebook", "web"] as const;
 export type Platform = (typeof PLATFORMS)[number];
 
-export const SOURCE_KINDS = ["reddit_subreddit", "reddit_search", "rss"] as const;
+/**
+ * `google_search` is the primary discovery source (Google Programmable Search over a
+ * platform's public pages). `rss` is Google Alerts, the free secondary net. The two Reddit
+ * API kinds are optional: they only work when the API app is approved and configured
+ * (docs/reddit-access.md).
+ */
+export const SOURCE_KINDS = ["reddit_subreddit", "reddit_search", "rss", "google_search"] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
+
+export const SEARCH_LOOKBACKS = ["d1", "d3", "d7"] as const;
+export type SearchLookback = (typeof SEARCH_LOOKBACKS)[number];
+export const MAX_SEARCH_PHRASES = 10;
 
 export const VERDICTS = ["hot", "warm", "cold", "insufficient", "disqualified"] as const;
 export type Verdict = (typeof VERDICTS)[number];
@@ -139,6 +149,19 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 // ---------------------------------------------------------------------------
 
 export const sourceConfigSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("google_search"),
+    config: z.object({
+      /** Which platform's public pages the query is scoped to; also the platform of every result. */
+      platform: z.enum(PLATFORMS),
+      /** Exact phrases a poster would write; OR-ed into one query. */
+      phrases: z.array(z.string().trim().min(1)).min(1).max(MAX_SEARCH_PHRASES),
+      /** `site:` operand, e.g. `reddit.com/r/startups`. Defaults per platform when omitted. */
+      siteScope: z.string().trim().min(1).optional(),
+      /** Google `dateRestrict`. Polling is frequent, so a day is the normal window. */
+      lookback: z.enum(SEARCH_LOOKBACKS).default("d1"),
+    }),
+  }),
   z.object({
     kind: z.literal("reddit_subreddit"),
     config: z.object({ subreddit: z.string().min(1), listing: z.enum(["new", "hot"]).default("new") }),
@@ -158,6 +181,22 @@ export const sourceConfigSchema = z.discriminatedUnion("kind", [
 ]);
 
 export type SourceConfig = z.infer<typeof sourceConfigSchema>;
+
+/**
+ * Optional per-source schedule: inside `[from, to)` local hours of `tz` the source polls on
+ * its `pollIntervalMin`; outside them it polls every `offInterval` minutes (overnight slowdown).
+ */
+export const activeHoursSchema = z
+  .object({
+    /** IANA zone, e.g. `Europe/Sofia`. */
+    tz: z.string().min(1),
+    from: z.number().int().min(0).max(23),
+    to: z.number().int().min(0).max(24),
+    offInterval: z.number().int().min(5),
+  })
+  .refine((h) => h.from !== h.to, { message: "from and to must differ" });
+
+export type ActiveHours = z.infer<typeof activeHoursSchema>;
 
 // ---------------------------------------------------------------------------
 // Campaign draft — what the setup chat produces and the create endpoint accepts.

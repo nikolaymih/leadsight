@@ -3,7 +3,7 @@ import type { FetchedPage } from "./fetch-pages.js";
 
 // Draft prompt v1 — docs/design.md §5. Bump DRAFT_PROMPT_VERSION on any wording change.
 
-export const DRAFT_PROMPT_VERSION = "2026-09-08.1";
+export const DRAFT_PROMPT_VERSION = "2026-09-09.1";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -58,8 +58,9 @@ Return a single JSON object:
   ],
   "thresholds": {"hot": <int>, "warm": <int>},
   "suggestedSources": [
-    {"kind": "reddit_subreddit", "config": {"subreddit": "<name without r/>"}},
-    {"kind": "reddit_search", "config": {"query": "<search phrase>"}}
+    {"kind": "google_search", "config": {"platform": "reddit", "phrases": ["<exact phrase a poster would write>", ...], "siteScope": "reddit.com/r/<subreddit>"}},
+    {"kind": "google_search", "config": {"platform": "linkedin", "phrases": [...]}},
+    {"kind": "google_search", "config": {"platform": "x", "phrases": [...]}}
   ],
   "alertQueries": ["<Google Alerts query, e.g. site:linkedin.com/posts \\"looking for a cto\\">", ...]
  }}
@@ -70,5 +71,10 @@ Rules for the draft:
 - Enum criteria list 2-5 options and give points for every option; no option's points exceed
   the criterion's weight. Number criteria give min < max.
 - thresholds: hot > warm, both 0-100 (70/40 is a sensible default).
-- 2-5 suggestedSources. 2-4 alertQueries targeting linkedin.com/posts, x.com or facebook.com.
+- 3-5 suggestedSources, all of kind "google_search": one per platform (reddit, linkedin, x),
+  plus optionally one per especially relevant subreddit with siteScope "reddit.com/r/<name>".
+  Each has 3-8 phrases (max 10): short, literal things a poster would type ("looking for a
+  cto", "need a technical cofounder"), no boolean operators, no quotes. Never suggest
+  reddit_subreddit or reddit_search (Reddit API access is restricted).
+- 2-4 alertQueries targeting linkedin.com/posts, x.com or facebook.com (Google Alerts syntax).
 - Platforms that exist: ${PLATFORMS.join(", ")}.`;

@@ -131,19 +131,21 @@ A configured source instance attached to a campaign. One campaign can have many.
 | id | uuid pk | |
 | organization_id | uuid fk | |
 | campaign_id | uuid fk | |
-| kind | enum `reddit_subreddit` `reddit_search` `rss` | `rss` covers Google Alerts feeds |
+| kind | enum `google_search` `rss` `reddit_subreddit` `reddit_search` | `google_search` is primary; `rss` covers Google Alerts feeds; the `reddit_*` kinds need Reddit API credentials (optional, see `docs/reddit-access.md`) |
 | config | jsonb | see below |
 | enabled | bool | |
 | cursor | jsonb | per-source coverage state (last seen id / timestamp) |
 | last_run_at | timestamptz | |
 | last_error | text nullable | |
 | poll_interval_min | int | default 60 |
+| active_hours | jsonb nullable | `{ "tz": "Europe/Sofia", "from": 8, "to": 23, "offInterval": 180 }` — outside `[from, to)` local hours the source polls every `offInterval` minutes instead (overnight slowdown); null = around the clock |
 
 `config` by kind:
 
+- `google_search`: `{ "platform": "reddit" | "linkedin" | "x" | "facebook" | "web", "phrases": ["looking for a cto", …] (1–10), "siteScope": "reddit.com/r/startups" (optional; defaults per platform: reddit.com, linkedin.com/posts, x.com, facebook.com, none for web), "lookback": "d1" | "d3" | "d7" }`
+- `rss`: `{ "url": "https://www.google.com/alerts/feeds/...", "platform": "linkedin" | "x" | "facebook" | "web" }`
 - `reddit_subreddit`: `{ "subreddit": "startups", "listing": "new" }`
 - `reddit_search`: `{ "query": "looking for a technical cofounder", "subreddit": null, "sort": "new" }`
-- `rss`: `{ "url": "https://www.google.com/alerts/feeds/...", "platform": "linkedin" | "x" | "facebook" | "web" }`
 
 ### 2.3 posts
 
@@ -279,6 +281,7 @@ export interface SourceRunResult {
   posts: RawPost[];
   nextCursor: unknown;      // opaque, persisted to sources.cursor
   warnings?: string[];
+  usage?: { searchQueries: number };   // metered calls; the pipeline books them
 }
 
 export interface Source<C = unknown> {
@@ -300,21 +303,42 @@ Rules:
   same cursor must not duplicate posts; dedupe happens on
   `(platform, external_id)` at insert time regardless.
 - Cursors are per source so a missed run catches up on the next one.
-- `hydrate` is where platform-specific fetching lives: LinkedIn public post
-  GET, X oEmbed endpoint, nothing for Facebook (snippet only).
+- Hydration is per **platform**, not per source, and lives on the registry
+  (`registry.hydrate(post)`): LinkedIn public post GET (crawler UA), X oEmbed,
+  Reddit public post page GET (crawler UA, reads the server-rendered
+  `<shreddit-post>`; never listings, never the API), nothing for Facebook or
+  generic web (snippet only). Blocked or changed markup keeps the snippet.
 - Any source failure sets `sources.last_error`; it never stops other sources.
+- Kinds whose credentials are missing are registered as *disabled* adapters:
+  config still validates, `run` fails with a clear non-retryable error, so
+  the source shows why in `last_error` instead of vanishing.
+
+**Source strategy (2026-09-09).** The Reddit Data API now requires manual
+approval (Responsible Builder Policy), approvals are rare, and the
+unauthenticated `.json`/RSS endpoints return 403; see `docs/reddit-access.md`.
+Discovery on Reddit, LinkedIn and X therefore goes through Google search over
+each platform's public pages, polled actively; Google Alerts RSS stays as the
+free secondary net. reddit.com is never scraped for discovery.
 
 Implementations in v1:
 
-- `RedditSubredditSource` — Reddit OAuth, `/r/{sub}/new`, cursor
-  `{ newest: fullname }` walked with `before`. If the cursor post was deleted
-  Reddit returns an empty page; the adapter then refetches the latest page
-  once so the cursor can move, and dedupe absorbs the repeats.
-- `RedditSearchSource` — `/search` with `sort=new`, cursor
-  `{ newestCreatedUtc }`, older results filtered client-side.
+- `GoogleSearchSource` (`google_search`, **primary**) — Google Programmable
+  Search JSON API (`GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX`). One query per source
+  per poll: `site:<scope> ("p1" OR "p2" …)`, max 10 phrases, `dateRestrict`
+  = lookback (`d1`), `sort=date`, 10 results; page 2 only when page 1 was
+  full. Results are filtered to post pages per platform (`/comments/`,
+  `/posts/`, `/status/`…), become snippet posts (`external_id` = canonical
+  URL) and are hydrated later. Cursor `{ lastQueryAt, query }` is
+  informational; dedupe at insert makes repeats harmless. Each run reports
+  `usage.searchQueries` (1–2), which the pipeline books against the daily
+  query budget (§4).
 - `RssSource` — parses any RSS/Atom feed (Google Alerts), cursor
   `{ newestPublished }`; `platform` taken from config; `external_id` is the
-  canonical target URL; calls `hydrate` per platform.
+  canonical target URL.
+- `RedditSubredditSource` / `RedditSearchSource` (**optional**, disabled
+  without API credentials) — Reddit OAuth, `/r/{sub}/new` with cursor
+  `{ newest: fullname }`, and `/search` with `sort=new`, cursor
+  `{ newestCreatedUtc }`.
 
 ### 3.2 Extractor (LLM)
 
@@ -410,8 +434,12 @@ log-only fallback.
 Runs inside the Fastify process on a scheduler (node-cron; swap to BullMQ if
 retries/visibility become painful).
 
-1. **Poll** — for each enabled source whose `poll_interval_min` has elapsed:
-   `run`, upsert posts, write `post_sources`, persist cursor.
+1. **Poll** — for each enabled source that is due: `run`, upsert posts, write
+   `post_sources`, persist cursor. Due = `poll_interval_min` elapsed, or
+   `active_hours.offInterval` elapsed when the source is outside its active
+   hours (evaluated in the source's time zone; `pipeline/schedule.ts`).
+   `google_search` sources additionally back off to 2 h while the search
+   query budget is ≥ 90% spent (resets at midnight UTC).
 2. **Pre-filter** — cheap local check: post must contain at least one campaign
    keyword or the source must be `reddit_search`/`rss` (already keyword-scoped).
    Everything else is kept as a post but not extracted. Implemented inside the
@@ -427,11 +455,18 @@ retries/visibility become painful).
    `source.run`, `source.error`, `extract.dropped`, `extract.error` and
    `extract.budget_exhausted` events as they happen.
 
-Budget guard: a per-provider daily token counter (caps are per API key, so
-usage is summed across organizations). A provider at ≥ 90% of its cap is
-skipped for the day and the next provider is used — logged, never silent.
-When every provider is over its cap, extraction stops for the run and the
-posts remain candidates for the next day.
+Budget guards (per UTC day, per API key, so usage is summed across
+organizations; both live in `extractor/budget.ts` and are stored as events):
+
+- LLM tokens per provider (`llm.usage` events). A provider at ≥ 90% of its
+  cap is skipped for the day and the next provider is used — logged, never
+  silent. When every provider is over its cap, extraction stops for the run
+  and the posts remain candidates for the next day.
+- Google search queries (`search.usage` events, `GOOGLE_CSE_DAILY_QUERIES`,
+  default 100 = the free tier). At ≥ 90% the search source skips its run
+  with a warning and the scheduler stretches `google_search` intervals to
+  2 h until midnight UTC; a request that got an HTTP answer counts even when
+  it failed.
 
 ## 5. Campaign setup chat
 
