@@ -1,16 +1,19 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { formatTokens } from "@/lib/format";
 import { orpc } from "@/lib/orpc";
 
-// Read-only for now: notifiers (Slack, email digest) ship in step 9 and provider keys live in the
-// API's environment. Fallback order and caps come from runs.budget.
+// Read-only: transports and provider keys live in the API's environment. What the API can
+// deliver comes from integrations.status; fallback order and caps from runs.budget.
+// Recipients are chosen per campaign (campaign settings → Email digest).
 
 export function Integrations() {
+  const status = useQuery(orpc.integrations.status.queryOptions());
   const budget = useQuery(orpc.runs.budget.queryOptions());
 
   return (
@@ -19,23 +22,54 @@ export function Integrations() {
         <CardHeader>
           <div>
             <CardTitle>Notifications</CardTitle>
-            <CardDescription>Where new leads above a campaign's alert score are announced.</CardDescription>
+            <CardDescription>
+              A daily email digest per campaign with the new leads at or above its alert score.
+            </CardDescription>
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
-          <Row
-            label="Slack webhook"
-            value={<Badge variant="muted">Not configured</Badge>}
-            hint="Per-campaign webhooks arrive with the notifiers release."
-          />
-          <Row
-            label="Email digest"
-            value={<Badge variant="muted">Not configured</Badge>}
-            hint="Daily digest to chosen recipients; same release."
-          />
+          {status.isPending ? (
+            <Skeleton className="h-10 w-full" />
+          ) : status.isError ? (
+            <p className="text-xs text-destructive">{status.error.message}</p>
+          ) : (
+            <>
+              <Row
+                label="Email delivery"
+                value={
+                  status.data.email.configured ? (
+                    <Badge>Configured</Badge>
+                  ) : (
+                    <Badge variant="muted">Log only</Badge>
+                  )
+                }
+                hint={
+                  status.data.email.configured
+                    ? `Sent from ${status.data.email.from}`
+                    : "SMTP_URL is not set on the API; digests, invitations and password resets are written to its log."
+                }
+              />
+              <Row
+                label="Digest recipients"
+                value={
+                  <span className="tabular text-xs text-muted-foreground">
+                    {status.data.digestCampaigns} campaign{status.data.digestCampaigns === 1 ? "" : "s"}
+                  </span>
+                }
+                hint="Set per campaign under its settings."
+              />
+              <Row
+                label="Chat alerts (Slack or similar)"
+                value={<Badge variant="muted">Not planned yet</Badge>}
+                hint="Deferred; email is the primary channel."
+              />
+            </>
+          )}
           <p className="text-xs text-muted-foreground">
-            Until then, the minimum score to alert is set per campaign and recorded for when delivery is
-            switched on.
+            <Link href="/campaigns" className="hover:underline">
+              Campaigns
+            </Link>{" "}
+            → settings → “Email digest recipients” to choose who gets each digest.
           </p>
         </CardContent>
       </Card>

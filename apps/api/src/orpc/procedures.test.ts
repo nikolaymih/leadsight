@@ -114,6 +114,29 @@ describe("campaigns", () => {
     const events = await app.db.select().from(schema.events).where(eq(schema.events.entityId, created.id));
     expect(events.map((e) => e.type).sort()).toEqual(["campaign.created", "campaign.rescored"]);
   });
+
+  it("stores digest recipients and reports them in integrations.status", async () => {
+    const created = await owner.campaigns.create({ ...draft, name: "Digest", suggestedSources: [] });
+    expect(created.notifications).toEqual({ digestRecipients: [] });
+
+    const before = await member.integrations.status();
+    // Test app has no SMTP_URL: mail is logged, not delivered.
+    expect(before.email).toEqual({ configured: false, from: null });
+
+    const updated = await owner.campaigns.update({
+      id: created.id,
+      notifications: { digestRecipients: ["sales@example.com"] },
+    });
+    expect(updated.notifications).toEqual({ digestRecipients: ["sales@example.com"] });
+    expect(updated.rulesVersion).toBe(1);
+
+    const after = await member.integrations.status();
+    expect(after.digestCampaigns).toBe(before.digestCampaigns + 1);
+
+    await expect(
+      owner.campaigns.update({ id: created.id, notifications: { digestRecipients: ["not-an-email"] } }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
 });
 
 describe("sources", () => {

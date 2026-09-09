@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { Criteria, Evidence, Thresholds } from "../types.js";
+import type { Criteria, Evidence, NotificationSettings, Thresholds } from "../types.js";
 import { CAMPAIGN_STATUSES, LEAD_STATUSES, PLATFORMS, SOURCE_KINDS, VERDICTS } from "../types.js";
 
 // Business tables. Better Auth's tables live in ./auth.ts; both are re-exported from
@@ -48,6 +48,10 @@ export const campaigns = pgTable(
     minConfidence: integer("min_confidence").default(50).notNull(),
     minScoreAlert: integer("min_score_alert").default(70).notNull(),
     fewshotLimit: integer("fewshot_limit").default(8).notNull(),
+    notifications: jsonb("notifications")
+      .$type<NotificationSettings>()
+      .default({ digestRecipients: [] })
+      .notNull(),
     createdBy: text("created_by").notNull(),
     ...timestamps,
   },

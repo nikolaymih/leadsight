@@ -17,7 +17,7 @@ packages/core/src/
               fewshot.ts (selectFewShot, formatExample), budget.ts (createBudget, createDbBudgetStore),
               providers/{provider,openai-compatible,groq,gemini}.ts
   rules/      index.ts (pure), tested
-  notify/     notifier.ts, slack.ts, email.ts
+  notify/     notifier.ts (contract), mailer.ts (transport contract), email.ts (digest)
   pipeline/   run.ts (orchestrates steps), prefilter.ts, dedupe.ts
   db/         queries (see postgres-drizzle skill). The pipeline uses: findDueSourcesAllOrgs,
               recordSourceRun, upsertPosts, findUnscoredPosts, listRecentLabels, upsertLead, appendEvent
@@ -150,10 +150,20 @@ re-asked once with the issues; a second failure throws a non-retryable `Provider
 
 ## Notifiers
 
-- `SlackWebhookNotifier`: one message per campaign per run, listing up to 10 leads with
-  verdict, score, summary, link. Silent when nothing qualifies.
-- `EmailDigestNotifier`: same content, once a day, via the configured SMTP (`nodemailer`).
-- Never notify `insufficient` or `disqualified`.
+- `createEmailDigestNotifier({ db, mailer, webOrigin?, minInterval?, now? })` in
+  `notify/email.ts` is the only notifier (a chat notifier such as Slack is deferred; it would
+  be another `Notifier` plus an optional key in `notificationSettingsSchema`).
+- The digest is per campaign, at most once per `minInterval` (24 h), to
+  `campaign.notifications.digestRecipients`. `notify()` is a trigger, not the payload: when
+  due it queries `listAlertableLeadsSince(since = last digest ?? now − interval)` so leads
+  that arrived while waiting are included, ranked like the inbox, capped at
+  `DIGEST_MAX_LEADS`. Sends write a `notify.email_digest` event (`lastEventAt` enforces the
+  interval across restarts); a failed send writes no event and the next run retries.
+- `Mailer` (`notify/mailer.ts`, `{ kind, send({ to, subject, text }) }`) is the transport
+  contract; core never sends mail itself. The API supplies SMTP or log-only.
+- Never notify `insufficient` or `disqualified` (the pipeline filters before calling, and the
+  digest query filters again).
+- Tests: `notify/email.test.ts` with a fake mailer against the real DB.
 
 ## Pipeline run
 

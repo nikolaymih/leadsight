@@ -82,6 +82,19 @@ export const thresholdsSchema = z
 
 export type Thresholds = z.infer<typeof thresholdsSchema>;
 
+/**
+ * Per-campaign notification settings, stored as jsonb. Email digest only for now; when a
+ * chat notifier is added it gets its own optional field here and a Notifier implementation,
+ * nothing else changes.
+ */
+export const notificationSettingsSchema = z.object({
+  digestRecipients: z.array(z.string().email()).max(20),
+});
+
+export type NotificationSettings = z.infer<typeof notificationSettingsSchema>;
+
+export const DEFAULT_NOTIFICATIONS: NotificationSettings = { digestRecipients: [] };
+
 // ---------------------------------------------------------------------------
 // Evidence — extractor output for one post against one campaign.
 // ---------------------------------------------------------------------------

@@ -114,11 +114,12 @@ export const authClient = createAuthClient({
 
 ## Email
 
-- Invitations and password resets go through the `Mailer` interface in `apps/api/src/mailer.ts`
-  (`send({ to, subject, text })`). `createAuth` wires it into `sendResetPassword` and
-  `sendInvitationEmail`; the auth plugin currently passes `createLogMailer`, which logs the
-  email instead of delivering it. Step 9 adds the nodemailer transport behind the same
-  interface — don't call nodemailer from `auth.ts` directly.
+- Invitations and password resets go through core's `Mailer` contract
+  (`packages/core/src/notify/mailer.ts`, `send({ to, subject, text })`), shared with the
+  lead digest. `createAuth({ env, db, mailer })` wires `app.mailer` into `sendResetPassword`
+  and `sendInvitationEmail`. The mailer plugin picks nodemailer over `SMTP_URL` (sender
+  `SMTP_FROM`) or a log-only mailer when unset — the link is then in the API log. Don't call
+  nodemailer from `auth.ts` directly.
 - Invitation links point at the web app (`${WEB_ORIGIN}/invite/<id>`), which calls
   `organization.acceptInvitation`. Reset links come from Better Auth; the web app requests
   them with an absolute `redirectTo` (`<web origin>/reset-password`) and that page calls

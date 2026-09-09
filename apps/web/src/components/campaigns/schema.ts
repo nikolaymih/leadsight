@@ -1,4 +1,8 @@
-import { campaignDraftSchema, type sourceConfigSchema } from "@leadsight/contract";
+import {
+  campaignDraftSchema,
+  notificationSettingsSchema,
+  type sourceConfigSchema,
+} from "@leadsight/contract";
 import { z } from "zod";
 
 // The campaign form validates with the same Zod the API uses (campaignDraftSchema), so a form
@@ -12,6 +16,7 @@ export const campaignFormSchema = campaignDraftSchema
     minConfidence: z.number().int().min(0).max(100).optional(),
     minScoreAlert: z.number().int().min(0).max(100).optional(),
     fewshotLimit: z.number().int().min(0).max(50).optional(),
+    notifications: notificationSettingsSchema.optional(),
   });
 
 export type CampaignFormValues = z.infer<typeof campaignFormSchema>;

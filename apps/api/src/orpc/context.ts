@@ -1,4 +1,4 @@
-import { type Db, schema } from "@leadsight/core";
+import { type Db, type Mailer, schema } from "@leadsight/core";
 import { ORPCError, os } from "@orpc/server";
 import { and, eq } from "drizzle-orm";
 import type { FastifyBaseLogger, FastifyRequest } from "fastify";
@@ -16,6 +16,8 @@ export interface Context {
   db: Db;
   logger: FastifyBaseLogger;
   pipeline: Pipeline;
+  mailer: Mailer;
+  mailFrom: string | null;
   session: AuthSession | null;
   /** The session's active organization — the tenant for this request. Never from client input. */
   orgId: string | null;
@@ -27,6 +29,8 @@ export interface ContextDeps {
   db: Db;
   auth: Auth;
   pipeline: Pipeline;
+  mailer: Mailer;
+  mailFrom: string | null;
 }
 
 export async function buildContext(request: FastifyRequest, deps: ContextDeps): Promise<Context> {
@@ -40,7 +44,16 @@ export async function buildContext(request: FastifyRequest, deps: ContextDeps): 
   const orgId = session?.session.activeOrganizationId ?? null;
   const role = session && orgId ? await lookupRole(deps.db, orgId, session.user.id) : null;
 
-  return { db: deps.db, logger: request.log, pipeline: deps.pipeline, session, orgId, role };
+  return {
+    db: deps.db,
+    logger: request.log,
+    pipeline: deps.pipeline,
+    mailer: deps.mailer,
+    mailFrom: deps.mailFrom,
+    session,
+    orgId,
+    role,
+  };
 }
 
 /** Better Auth may store several comma-separated roles; the highest one counts. */

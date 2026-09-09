@@ -1,9 +1,9 @@
+import type { Mailer } from "@leadsight/core";
 import { type Db, schema } from "@leadsight/core";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin, organization } from "better-auth/plugins";
 import type { Env } from "./env.js";
-import type { Mailer } from "./mailer.js";
 
 // Better Auth server instance. Tables live in packages/core/src/schema/auth.ts;
 // after changing plugins here, regenerate and diff them (see the better-auth skill).

@@ -39,9 +39,9 @@ in the same PR so the next task inherits it.
 ## Layout
 
 ```
-packages/core       domain: types (Zod), Drizzle schema, db queries, rules, sources, extractor, draft, scoring, pipeline, notifier contract. No framework deps.
+packages/core       domain: types (Zod), Drizzle schema, db queries, rules, sources, extractor, draft, scoring, pipeline, notifiers (email digest; Mailer contract). No framework deps.
 packages/contract   oRPC contract: Zod wire schemas + routes. Consumed by api and web.
-apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (complete)
+apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client, SMTP mailer. (complete)
 apps/web            Next.js 15 App Router dashboard.                                  (complete; notifier settings await step 9)
 docs/               design.md, ui-brief.md
 .claude/skills/     conventions per area (see router above)
@@ -117,5 +117,5 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 6. ~~oRPC procedures for campaigns, sources, leads, runs (real implementations).~~ Done — `apps/api/src/orpc/{context,error-map,mappers}.ts`, `procedures/*`; only `campaigns.draft` is still a stub.
 7. ~~Campaign draft endpoint (LLM-generated draft from chat + URLs).~~ Done — `packages/core/src/draft/`, `extractor/chain.ts` shared with the extractor, `campaigns.draft`.
 8. ~~`apps/web`: shell, auth screens, inbox, lead panel, campaign setup chat, sources & runs, settings — per `docs/ui-brief.md`.~~ Done — `apps/web/src`; every screen smoke-tested in a browser against the live API. Slack/email settings are placeholders until step 9.
-9. Notifiers (Slack, email digest): nodemailer transport behind `apps/api/src/mailer.ts`, per-campaign Slack webhook + digest recipients (needs a schema addition; the UI's Integrations tab and campaign settings already reserve the spot).
+9. ~~Notifiers.~~ Done as **email digest only** (2026-09-09, user decision; Slack or another chat notifier deferred until wanted) — `packages/core/src/notify/{mailer,email}.ts`, `campaigns.notifications` jsonb (migration `0001`), `apps/api/src/{mailer.ts,plugins/mailer.ts}` (`SMTP_URL`/`SMTP_FROM`), `integrations.status`, recipients in campaign settings.
 10. Deploy: Dockerfiles for api and web, compose for the hosting machine, migration step.

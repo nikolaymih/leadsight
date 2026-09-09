@@ -41,6 +41,22 @@ export async function sumLlmUsageSince(db: DbLike, provider: string, since: Date
   return row?.total ?? 0;
 }
 
+/** When an event of `type` for `entityId` was last recorded in the organization, or null. */
+export async function lastEventAt(
+  db: DbLike,
+  orgId: string,
+  type: string,
+  entityId: string,
+): Promise<Date | null> {
+  const [row] = await db
+    .select({ createdAt: events.createdAt })
+    .from(events)
+    .where(and(eq(events.organizationId, orgId), eq(events.type, type), eq(events.entityId, entityId)))
+    .orderBy(desc(events.createdAt))
+    .limit(1);
+  return row?.createdAt ?? null;
+}
+
 /** Payloads of the most recent `pipeline.run` events for an organization, newest first. */
 export async function listPipelineRunPayloads(db: DbLike, orgId: string, limit = 20): Promise<unknown[]> {
   const rows = await db

@@ -3,12 +3,13 @@ import Fastify, { type FastifyServerOptions } from "fastify";
 import type { Env } from "./env.js";
 import { authPlugin } from "./plugins/auth.js";
 import { dbPlugin } from "./plugins/db.js";
+import { mailerPlugin } from "./plugins/mailer.js";
 import { orpcPlugin } from "./plugins/orpc.js";
 import { pipelinePlugin } from "./plugins/pipeline.js";
 import { schedulerPlugin } from "./plugins/scheduler.js";
 import { healthRoutes } from "./routes/health.js";
 
-// Register order is fixed: cors → db → auth → pipeline → orpc → scheduler → routes.
+// Register order is fixed: cors → db → mailer → auth → pipeline → orpc → scheduler → routes.
 // Register nothing elsewhere.
 export async function buildApp(env: Env) {
   const app = Fastify({
@@ -20,6 +21,7 @@ export async function buildApp(env: Env) {
 
   await app.register(cors, { origin: env.WEB_ORIGIN, credentials: true });
   await app.register(dbPlugin, { databaseUrl: env.DATABASE_URL });
+  await app.register(mailerPlugin, { env });
   await app.register(authPlugin, { env });
   await app.register(pipelinePlugin, { env });
   await app.register(orpcPlugin);

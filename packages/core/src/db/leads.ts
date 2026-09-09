@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { NotFoundError } from "../errors.js";
 import {
@@ -138,6 +138,41 @@ export async function listLeads(
     items: page.map((r) => ({ ...r.lead, post: r.post })),
     nextCursor: last ? encodeCursor(cursorValues(sort, last.lead, last.scoredAtText)) : null,
   };
+}
+
+export interface AlertableLeadsQuery {
+  /** Only leads scored after this instant. */
+  since: Date;
+  minScore: number;
+  limit?: number;
+}
+
+/**
+ * Leads worth telling someone about: scored since `since`, at or above `minScore`, never
+ * insufficient or disqualified. Ranked like the inbox. Used by the digest notifier.
+ */
+export async function listAlertableLeadsSince(
+  db: DbLike,
+  orgId: string,
+  campaignId: string,
+  query: AlertableLeadsQuery,
+): Promise<LeadWithPost[]> {
+  const rows = await db
+    .select({ lead: leads, post: posts })
+    .from(leads)
+    .innerJoin(posts, eq(posts.id, leads.postId))
+    .where(
+      and(
+        eq(leads.organizationId, orgId),
+        eq(leads.campaignId, campaignId),
+        gt(leads.scoredAt, query.since),
+        gte(leads.score, query.minScore),
+        inArray(leads.verdict, ["hot", "warm", "cold"]),
+      ),
+    )
+    .orderBy(...orderFor("rank"))
+    .limit(query.limit ?? 50);
+  return rows.map((r) => ({ ...r.lead, post: r.post }));
 }
 
 function orderFor(sort: LeadSort): SQL[] {

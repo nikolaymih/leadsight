@@ -25,6 +25,9 @@ const envSchema = z
     BETTER_AUTH_SECRET: z.string().min(1),
     GOOGLE_CLIENT_ID: optionalString,
     GOOGLE_CLIENT_SECRET: optionalString,
+    // Email (password resets, invitations, lead digests). Logged when unset.
+    SMTP_URL: optionalString,
+    SMTP_FROM: z.string().default("LeadSight <no-reply@localhost>"),
     // Pipeline
     REDDIT_CLIENT_ID: optionalString,
     REDDIT_CLIENT_SECRET: optionalString,

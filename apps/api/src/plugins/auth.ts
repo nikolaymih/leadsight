@@ -2,7 +2,6 @@ import fp from "fastify-plugin";
 import { type Auth, createAuth } from "../auth.js";
 import type { Env } from "../env.js";
 import { toWebRequest } from "../http.js";
-import { createLogMailer } from "../mailer.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -20,7 +19,7 @@ const HOP_BY_HOP = new Set(["content-length", "transfer-encoding", "set-cookie"]
 
 export const authPlugin = fp<AuthPluginOptions>(
   async (app, opts) => {
-    const auth = createAuth({ env: opts.env, db: app.db, mailer: createLogMailer(app.log) });
+    const auth = createAuth({ env: opts.env, db: app.db, mailer: app.mailer });
     app.decorate("auth", auth);
 
     // Encapsulated scope: the raw-string body parser applies to Better Auth
@@ -48,5 +47,5 @@ export const authPlugin = fp<AuthPluginOptions>(
       });
     });
   },
-  { name: "auth", dependencies: ["db"] },
+  { name: "auth", dependencies: ["db", "mailer"] },
 );

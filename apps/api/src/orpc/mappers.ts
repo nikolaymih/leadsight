@@ -44,6 +44,7 @@ export function toCampaign(row: schema.Campaign): CampaignWire {
     minConfidence: row.minConfidence,
     minScoreAlert: row.minScoreAlert,
     fewshotLimit: row.fewshotLimit,
+    notifications: row.notifications,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
   };

@@ -1,0 +1,1 @@
+ALTER TABLE "campaigns" ADD COLUMN "notifications" jsonb DEFAULT '{"digestRecipients":[]}'::jsonb NOT NULL;

@@ -5,6 +5,7 @@ import {
   createBudget,
   createCampaignDrafter,
   createDbBudgetStore,
+  createEmailDigestNotifier,
   createGeminiProvider,
   createGroqProvider,
   createLlmExtractor,
@@ -66,7 +67,8 @@ export const pipelinePlugin = fp<PipelinePluginOptions>(
     const pipeline: Pipeline = {
       db: app.db,
       registry,
-      notifiers: [],
+      // Email digest only for now; a chat notifier (Slack or similar) is deferred and would be appended here.
+      notifiers: [createEmailDigestNotifier({ db: app.db, mailer: app.mailer, webOrigin: env.WEB_ORIGIN })],
       logger: app.log,
       budget,
       providerNames: providers.map((p) => p.name),
@@ -83,5 +85,5 @@ export const pipelinePlugin = fp<PipelinePluginOptions>(
     };
     app.decorate("pipeline", pipeline);
   },
-  { name: "pipeline", dependencies: ["db"] },
+  { name: "pipeline", dependencies: ["db", "mailer"] },
 );

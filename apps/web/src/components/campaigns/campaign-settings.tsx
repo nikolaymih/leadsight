@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { useWatch } from "react-hook-form";
+import { Controller, type FieldErrors, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { VerdictBadge } from "@/components/inbox/verdict-badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,16 @@ import { orpc } from "@/lib/orpc";
 import { type Campaign, VERDICTS } from "@/lib/types";
 import { CampaignForm, useCampaignForm } from "./campaign-form";
 import type { CampaignFormValues } from "./schema";
+import { TagInput } from "./tag-input";
+
+/** Zod reports a bad address at `notifications.digestRecipients.<index>`; surface the first one. */
+function digestError(errors: FieldErrors<CampaignFormValues>): string | undefined {
+  const list = errors.notifications?.digestRecipients;
+  if (!list) return undefined;
+  if (!Array.isArray(list)) return list.message;
+  const first = list.find((item) => item?.message);
+  return first?.message ? `Invalid address: ${first.message}` : undefined;
+}
 
 // Same form as the draft pane, for a saved campaign. Adds rules version, rescoring preview,
 // tuning fields, pause/archive and the alert threshold.
@@ -65,6 +75,7 @@ function toFormValues(c: Campaign): CampaignFormValues {
     minConfidence: c.minConfidence,
     minScoreAlert: c.minScoreAlert,
     fewshotLimit: c.fewshotLimit,
+    notifications: c.notifications,
   };
 }
 
@@ -235,10 +246,26 @@ function SettingsForm({ campaign }: { campaign: Campaign }) {
                 />
               </Field>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Slack and email digest delivery are configured under Settings → Integrations once notifiers
-              ship.
-            </p>
+            <Controller
+              control={form.control}
+              name="notifications.digestRecipients"
+              render={({ field }) => (
+                <Field
+                  label="Email digest recipients"
+                  htmlFor="digestRecipients"
+                  hint="At most one email per day per campaign, listing new leads at or above the alert score. Leave empty to send nothing. Delivery status is under Settings → Integrations."
+                  error={digestError(e)}
+                >
+                  <TagInput
+                    id="digestRecipients"
+                    value={field.value ?? []}
+                    onChange={field.onChange}
+                    disabled={readOnly || busy}
+                    placeholder="name@company.com, Enter to add"
+                  />
+                </Field>
+              )}
+            />
 
             <RescorePreview campaign={campaign} form={form} enabled={preview} onToggle={setPreview} />
 

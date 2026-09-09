@@ -114,8 +114,8 @@ Additions:
   shows how many current leads would move between verdicts, computed from
   stored evidence (no LLM call). Save then applies it.
 - Pause / archive campaign.
-- Notification settings: Slack webhook, email digest recipients, minimum
-  score to alert.
+- Notification settings: email digest recipients, minimum score to alert.
+  (A Slack webhook field is deferred until a chat notifier is wanted.)
 
 ### 5. Sources & runs
 
@@ -134,7 +134,9 @@ cap, per provider.
 ### 6. Settings
 
 - Organization: name, members with roles, invite by email.
-- Integrations: Slack webhook, email sender.
+- Integrations: email delivery status (SMTP configured or log-only, sender
+  address), how many campaigns have digest recipients; chat alerts shown as
+  deferred.
 - Providers: Groq key, Gemini key, order of fallback (read-only display,
   keys masked).
 - Personal: profile, theme, notification preferences.

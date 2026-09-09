@@ -60,6 +60,7 @@ Everything needed to judge a post. Drafted by the setup chat, always editable.
 | min_confidence | int | below this the verdict is `insufficient` (default 50) |
 | min_score_alert | int | threshold for notifications (default = hot) |
 | fewshot_limit | int | labeled examples injected into the prompt (default 8) |
+| notifications | jsonb | `{ "digestRecipients": [] }` — per-campaign notifier settings; a chat notifier would add its own optional key here |
 | created_by | uuid fk user | |
 | created_at / updated_at | timestamptz | |
 
@@ -388,9 +389,21 @@ export interface Notifier {
 }
 ```
 
-`SlackWebhookNotifier` and `EmailDigestNotifier` in v1. Called with all new
-leads at or above `min_score_alert` (and not `insufficient`) after each
-scoring run, batched per campaign.
+Called with all new leads at or above `min_score_alert` (and not
+`insufficient`/`disqualified`) after each scoring run, batched per campaign.
+
+v1 ships **`EmailDigestNotifier`** only (decided 2026-09-09; a chat notifier
+such as Slack is deferred until there is a need — it would be one more
+implementation of this interface plus an optional field in `notifications`).
+The digest sends at most one email per campaign per 24 h to
+`campaigns.notifications.digestRecipients`; when due, it covers every
+alertable lead scored since the previous digest (so leads that arrived while
+the notifier was waiting are not lost), capped at 50, ranked like the inbox.
+Each send is a `notify.email_digest` event, which is also how the interval is
+enforced across restarts; a failed send writes no event and is retried on the
+next run. Transport is `Mailer` (`packages/core/src/notify/mailer.ts`),
+implemented in the API with nodemailer (`SMTP_URL`, `SMTP_FROM`) or a
+log-only fallback.
 
 ## 4. Pipeline
 

@@ -3,7 +3,8 @@ import type { Campaign } from "../schema/index.js";
 
 // Notifier contract — docs/design.md §3.4. Called once per campaign per pipeline run
 // with the new leads at or above `minScoreAlert` (never insufficient/disqualified).
-// Implementations (Slack webhook, email digest) arrive in step 9.
+// v1 ships the email digest (`email.ts`); a chat notifier (Slack or similar) is deferred
+// and would implement this same interface.
 
 export interface Notifier {
   readonly name: string;

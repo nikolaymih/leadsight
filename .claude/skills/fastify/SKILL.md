@@ -12,16 +12,18 @@ apps/api/src/
   env.ts              Zod-validated env, the only place that reads process.env; loadEnv(source?)
   server.ts           entry: loadEnv, buildApp, listen, SIGTERM/SIGINT with a 10s deadline
   app.ts              buildApp(env): registers plugins in order, returns the FastifyInstance
-  auth.ts             createAuth({ env, db }) → Better Auth instance (explicit deps, no singleton)
+  auth.ts             createAuth({ env, db, mailer }) → Better Auth instance (explicit deps, no singleton)
   http.ts             Node ⇄ web conversions (toWebHeaders, toWebRequest) for Better Auth
+  mailer.ts           createSmtpMailer (nodemailer, SMTP_URL/SMTP_FROM) and createLogMailer behind core's Mailer
   plugins/
     db.ts             decorates app.db (drizzle client), closes the pool on app.close
+    mailer.ts         decorates app.mailer + app.mailFrom: SMTP when SMTP_URL is set, else log-only (warns in production)
     auth.ts           decorates app.auth, mounts /api/auth/* in an encapsulated scope with a raw-string body parser
     orpc.ts           RPCHandler from @orpc/server/fastify, mounts /rpc/*
-    pipeline.ts       builds core's PipelineDeps from env once (registry, providers, budget, extractorFor, drafterFor), decorates app.pipeline
+    pipeline.ts       builds core's PipelineDeps from env once (registry, providers, budget, notifiers [email digest], extractorFor, drafterFor), decorates app.pipeline
     scheduler.ts      one node-cron job → runPipeline(app.pipeline); createTick() mutex; started on ready, stopped on close
   orpc/
-    context.ts        Context type, buildContext(request, { db, auth }), requireOrg middleware
+    context.ts        Context type, buildContext(request, { db, auth, pipeline, mailer, mailFrom }), requireOrg middleware
     implementer.ts    os = implement(contract).$context<Context>(); authed = os.use(requireOrg)
     error-map.ts      core errors → ORPCError                                      (step 2)
     router.ts         os.router({ campaigns, sources, leads, runs }); fails to compile if a procedure is missing
@@ -41,7 +43,7 @@ declaration output (TS2742).
 - **Plugins via `fastify-plugin`** so decorators are visible app-wide. Every file in
   `plugins/` exports `fp(async (app, opts) => { ... })` with a `name` and `dependencies`.
 - **Register order matters** and is fixed in `app.ts`: env → logger config → cors → db →
-  auth → pipeline → orpc → scheduler → routes. Don't register anything outside `app.ts`.
+  mailer → auth → pipeline → orpc → scheduler → routes. Don't register anything outside `app.ts`.
 - **No business logic in the API package.** Procedures call functions from
   `@leadsight/core` and map rows to contract shapes. See `code-style` skill.
 - **Auth on every oRPC procedure** except none. The oRPC context builder reads the Better

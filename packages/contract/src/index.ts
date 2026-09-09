@@ -4,6 +4,7 @@ import {
   criteriaSchema,
   evidenceSchema,
   LEAD_STATUSES,
+  notificationSettingsSchema,
   PLATFORMS,
   sourceConfigSchema,
   thresholdsSchema,
@@ -15,7 +16,13 @@ import { z } from "zod";
 // The contract imports core's types entry only (`@leadsight/core/types`, Zod-only) so that the
 // web bundle never pulls in core's DB/LLM/Node code through the main barrel.
 // Re-exported so apps/web can validate forms without importing core.
-export { campaignDraftSchema, criteriaSchema, sourceConfigSchema, thresholdsSchema };
+export {
+  campaignDraftSchema,
+  criteriaSchema,
+  notificationSettingsSchema,
+  sourceConfigSchema,
+  thresholdsSchema,
+};
 
 // ---------------------------------------------------------------------------
 // Shared schemas (wire shapes; DB rows are mapped to these in the api layer)
@@ -38,6 +45,7 @@ export const campaignSchema = z.object({
   minConfidence: z.number().int(),
   minScoreAlert: z.number().int(),
   fewshotLimit: z.number().int(),
+  notifications: notificationSettingsSchema,
   createdAt: isoDate,
   updatedAt: isoDate,
 });
@@ -176,6 +184,7 @@ export const contract = {
               minConfidence: true,
               minScoreAlert: true,
               fewshotLimit: true,
+              notifications: true,
             })
             .partial(),
         ),
@@ -303,6 +312,21 @@ export const contract = {
           dailyCap: z.number().int().nullable(),
         }),
       ),
+    ),
+  },
+
+  integrations: {
+    /** What the API can deliver, for the settings screen. Secrets never leave the API. */
+    status: base.route({ method: "GET", path: "/integrations" }).output(
+      z.object({
+        email: z.object({
+          /** false → messages are only written to the API log. */
+          configured: z.boolean(),
+          from: z.string().nullable(),
+        }),
+        /** Campaigns in the organization with at least one digest recipient. */
+        digestCampaigns: z.number().int(),
+      }),
     ),
   },
 };

@@ -1,7 +1,13 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { NotFoundError, ValidationError } from "../errors.js";
 import { type Campaign, campaigns } from "../schema/index.js";
-import { type Criteria, criteriaSchema, type Thresholds, thresholdsSchema } from "../types.js";
+import {
+  type Criteria,
+  criteriaSchema,
+  notificationSettingsSchema,
+  type Thresholds,
+  thresholdsSchema,
+} from "../types.js";
 import type { DbLike } from "./client.js";
 
 export interface CreateCampaignInput {
@@ -32,6 +38,7 @@ export type UpdateCampaignPatch = Partial<
     | "minConfidence"
     | "minScoreAlert"
     | "fewshotLimit"
+    | "notifications"
   >
 >;
 
@@ -93,6 +100,10 @@ export async function updateCampaign(
     patch.criteria === undefined ? undefined : validate(criteriaSchema, patch.criteria, "criteria");
   const thresholds =
     patch.thresholds === undefined ? undefined : validate(thresholdsSchema, patch.thresholds, "thresholds");
+  const notifications =
+    patch.notifications === undefined
+      ? undefined
+      : validate(notificationSettingsSchema, patch.notifications, "notifications");
   const criteriaChanged = criteria !== undefined && !sameJson(criteria, current.criteria);
 
   const [row] = await db
@@ -101,6 +112,7 @@ export async function updateCampaign(
       ...patch,
       criteria,
       thresholds,
+      notifications,
       rulesVersion: criteriaChanged ? sql`${campaigns.rulesVersion} + 1` : undefined,
       updatedAt: new Date(),
     })

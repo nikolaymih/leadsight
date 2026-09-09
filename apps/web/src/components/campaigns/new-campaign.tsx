@@ -59,7 +59,8 @@ export function NewCampaign() {
   );
 
   function submit(values: CampaignFormValues) {
-    const { minConfidence: _c, minScoreAlert: _m, fewshotLimit: _f, ...draft } = values;
+    // Tuning and notification fields are edited on the saved campaign; create takes the draft shape.
+    const { minConfidence: _c, minScoreAlert: _m, fewshotLimit: _f, notifications: _n, ...draft } = values;
     create.mutate({ ...draft, suggestedSources: sourcesToCreate(sources) });
   }
 

@@ -12,10 +12,16 @@ export const orpcPlugin = fp(
     app.all("/rpc/*", async (request, reply) => {
       const { matched } = await handler.handle(request, reply, {
         prefix: "/rpc",
-        context: await buildContext(request, { db: app.db, auth: app.auth, pipeline: app.pipeline }),
+        context: await buildContext(request, {
+          db: app.db,
+          auth: app.auth,
+          pipeline: app.pipeline,
+          mailer: app.mailer,
+          mailFrom: app.mailFrom,
+        }),
       });
       if (!matched) return reply.status(404).send({ error: "not found" });
     });
   },
-  { name: "orpc", dependencies: ["db", "auth", "pipeline"] },
+  { name: "orpc", dependencies: ["db", "mailer", "auth", "pipeline"] },
 );
