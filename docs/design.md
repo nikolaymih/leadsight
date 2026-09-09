@@ -526,10 +526,16 @@ deletes and changes organization settings.
 ## 8. Open decisions
 
 - ORM: **Drizzle** (decided). Schema in TS, `drizzle-kit generate` for
-  migrations committed to git, applied with `drizzle-kit migrate` as a deploy
-  step — never at service boot, so a bad migration cannot take the API down
-  mid-rollout; `push` only for local iteration. Better Auth tables emitted via
-  its CLI into the same schema.
+  migrations committed to git, applied as a deploy step — `pnpm db:migrate`
+  (drizzle-kit) in development, `node dist/migrate.js` (drizzle-orm's migrator
+  over the same folder, no drizzle-kit in the image) as the compose `migrate`
+  service in production — never at service boot, so a bad migration cannot
+  take the API down mid-rollout; `push` only for local iteration. Better Auth
+  tables emitted via its CLI into the same schema.
+- Hosting: **one machine, Docker Compose** (`deploy/compose.yml`): Postgres,
+  migrate, api, web, Caddy. One public origin; Caddy routes `/api/*`, `/rpc/*`,
+  `/healthz` to the API, the rest to Next.js. Same-site cookies, no CORS in
+  production. Split hosts (api.\<domain\>) would need `crossSubDomainCookies`.
 - Session cookie cache: enabled for the web app, but the API always reads the
   session from the database when building the request context. The active
   organization is the tenant boundary and must never be served stale.

@@ -12,7 +12,8 @@ export interface DbPluginOptions {
 }
 
 // One pool per process. Migrations are not run here: they are a deploy step
-// (`pnpm db:migrate`), so a bad migration cannot take the API down mid-rollout.
+// (`pnpm db:migrate` in dev, `node dist/migrate.js` in the container), so a bad migration
+// cannot take the API down mid-rollout.
 export const dbPlugin = fp<DbPluginOptions>(
   async (app, opts) => {
     const client = createDb(opts.databaseUrl);

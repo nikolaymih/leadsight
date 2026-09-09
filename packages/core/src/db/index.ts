@@ -5,5 +5,6 @@ export * from "./events.js";
 export * from "./labels.js";
 export * from "./lead-scores.js";
 export * from "./leads.js";
+export * from "./migrate.js";
 export * from "./posts.js";
 export * from "./sources.js";

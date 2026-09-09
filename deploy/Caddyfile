@@ -1,0 +1,24 @@
+# One origin for everything. Caddy obtains and renews the TLS certificate for $DOMAIN
+# automatically (ports 80/443 must reach this host). For a LAN-only deploy without a public
+# DNS name, replace `{$DOMAIN}` with `http://leads.internal` (or `:80`) to disable TLS.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API: Better Auth, oRPC, health. The API sees the real client IP via X-Forwarded-For
+	# (Fastify has trustProxy on in production).
+	@api path /api/* /rpc/* /healthz
+	handle @api {
+		reverse_proxy api:3001
+	}
+
+	# Everything else is the Next.js app.
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

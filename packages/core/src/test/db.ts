@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { createDb, type Db } from "../db/client.js";
+import { MIGRATIONS_DIR } from "../db/migrate.js";
 
 // One real Postgres database per test, cloned from a template that has the committed
 // migrations applied. Schema-per-test is not an option: drizzle-kit qualifies enum types
@@ -15,7 +15,6 @@ import { createDb, type Db } from "../db/client.js";
 
 export const DEFAULT_DATABASE_URL = "postgres://leadsight:leadsight@localhost:5432/leadsight";
 
-const MIGRATIONS_DIR = fileURLToPath(new URL("../../drizzle", import.meta.url));
 const TEMPLATE_PREFIX = "leadsight_tpl_";
 const TEST_PREFIX = "leadsight_test_";
 /** Arbitrary constant; serialises template creation across vitest workers. */

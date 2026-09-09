@@ -43,6 +43,7 @@ packages/core       domain: types (Zod), Drizzle schema, db queries, rules, sour
 packages/contract   oRPC contract: Zod wire schemas + routes. Consumed by api and web.
 apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client, SMTP mailer. (complete)
 apps/web            Next.js 15 App Router dashboard.                                  (complete; notifier settings await step 9)
+deploy/             compose.yml (db, migrate, api, web, caddy), Caddyfile, .env.example, README.md — single-host deploy
 docs/               design.md, ui-brief.md
 .claude/skills/     conventions per area (see router above)
 ```
@@ -63,6 +64,7 @@ pnpm dev:web         next dev on :3000             (API on :3001; NEXT_PUBLIC_AP
 pnpm --filter @leadsight/web build   next build — run before pushing web changes; it is the bundle check
                                      (typecheck does not catch Node-only imports reaching the browser)
 docker compose up db local Postgres 17
+docker compose --env-file deploy/.env -f deploy/compose.yml up -d --build   production stack on the host (see deploy/README.md)
 ```
 
 ## Approved libraries
@@ -118,4 +120,6 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 7. ~~Campaign draft endpoint (LLM-generated draft from chat + URLs).~~ Done — `packages/core/src/draft/`, `extractor/chain.ts` shared with the extractor, `campaigns.draft`.
 8. ~~`apps/web`: shell, auth screens, inbox, lead panel, campaign setup chat, sources & runs, settings — per `docs/ui-brief.md`.~~ Done — `apps/web/src`; every screen smoke-tested in a browser against the live API. Slack/email settings are placeholders until step 9.
 9. ~~Notifiers.~~ Done as **email digest only** (2026-09-09, user decision; Slack or another chat notifier deferred until wanted) — `packages/core/src/notify/{mailer,email}.ts`, `campaigns.notifications` jsonb (migration `0001`), `apps/api/src/{mailer.ts,plugins/mailer.ts}` (`SMTP_URL`/`SMTP_FROM`), `integrations.status`, recipients in campaign settings.
-10. Deploy: Dockerfiles for api and web, compose for the hosting machine, migration step.
+10. ~~Deploy: Dockerfiles for api and web, compose for the hosting machine, migration step.~~ Done — `apps/{api,web}/Dockerfile`, `deploy/{compose.yml,Caddyfile,.env.example,README.md}`, `apps/api/src/migrate.ts` + core `runMigrations`. Verified without a Docker daemon (sandbox has none): the flattened API output migrates and serves, the Next standalone server serves; first real `docker compose up` still to be done on the host.
+
+All ten steps are done. Next: run the pipeline end-to-end with real credentials (Groq, Reddit) and replace hand-authored fixtures with recordings; zod 4 / Next 16 / react-table 9 upgrades; a chat notifier when wanted.

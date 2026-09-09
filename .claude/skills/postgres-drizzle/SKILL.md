@@ -125,8 +125,12 @@ notes), `labels.ts`, `events.ts`, plus `client.ts` (`Db`, `Tx`, `DbLike`, `creat
   the Drizzle instance (`drizzle(client, { schema })` so the relational API works). It
   returns `{ db, close }`; `apps/api/src/plugins/db.ts` calls it once and closes on
   `app.close()`. Nothing else constructs a pool.
-- Migrations run via `drizzle-kit migrate` in the deploy step, not at app boot, so a bad
-  migration doesn't take the API down mid-rollout.
+- Migrations run as a deploy step, not at app boot, so a bad migration doesn't take the API
+  down mid-rollout. Locally `pnpm db:migrate` (drizzle-kit). In production the API image runs
+  `node dist/migrate.js` → core's `runMigrations(url)` (`db/migrate.ts`, drizzle-orm's
+  migrator over `packages/core/drizzle`, no drizzle-kit needed); the compose `migrate`
+  service does this before the API starts. `MIGRATIONS_DIR` there is also what the test
+  template builder uses.
 
 ## Testing with a real database
 

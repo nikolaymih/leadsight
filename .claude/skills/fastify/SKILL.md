@@ -11,6 +11,8 @@ description: How to build and extend the LeadSight API server in apps/api with F
 apps/api/src/
   env.ts              Zod-validated env, the only place that reads process.env; loadEnv(source?)
   server.ts           entry: loadEnv, buildApp, listen, SIGTERM/SIGINT with a 10s deadline
+  migrate.ts          deploy-step entry (`node dist/migrate.js`): core's runMigrations over DATABASE_URL, non-zero exit on failure
+  Dockerfile          multi-stage (root build context): pnpm install → build core/contract/api → `pnpm deploy --legacy --prod` → node:22-alpine runner; same image runs migrate and server
   app.ts              buildApp(env): registers plugins in order, returns the FastifyInstance
   auth.ts             createAuth({ env, db, mailer }) → Better Auth instance (explicit deps, no singleton)
   http.ts             Node ⇄ web conversions (toWebHeaders, toWebRequest) for Better Auth
