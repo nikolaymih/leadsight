@@ -43,7 +43,13 @@ const { data } = useInfiniteQuery(
   use `queryOptions`.
 - Server-side initial data: in the page server component, prefetch into a per-request
   QueryClient and wrap the tree in `HydrationBoundary`. Client components then read from
-  cache without a loading flash.
+  cache without a loading flash. The infinite key is derived from `input(initialPageParam)`,
+  so build the input with the same helper on both sides (`toLeadListInput`).
+- No campaign yet (or any missing prerequisite): pass `skipToken` as `input` instead of
+  `enabled: false`, so the input type stays honest.
+- Better Auth data (organization detail, invitations) is also read through `useQuery`, keyed
+  under `["auth", …]` in the component that owns it, so mutations can invalidate. The
+  Better Auth hooks (`useSession`, `useActiveOrganization`) are fine for read-only shell state.
 
 ## Mutations
 
@@ -63,7 +69,9 @@ const update = useMutation(
 ```
 
 - **Optimistic** for status and assignee changes (the user does these dozens of times a
-  day; a round-trip per click feels slow). Keep the patch helper pure and tested.
+  day; a round-trip per click feels slow). The patchers live in `lib/lead-cache.ts`
+  (`patchLeadsInList`, `patchLeadDetail`), accept `unknown` because one key covers infinite
+  and plain pages, and are tested. `components/inbox/use-lead-mutations.ts` wires them.
 - **Not optimistic** for anything that changes scores (rescore, campaign criteria save):
   show a pending state and invalidate on success.
 - After `campaigns.update` or `campaigns.rescore`: invalidate `orpc.leads.key()` and
@@ -74,9 +82,12 @@ const update = useMutation(
 
 ## Polling
 
-- Sources & Runs page: `refetchInterval: 15_000` while the tab is visible, so a
-  manual "Run now" shows progress. Nowhere else polls.
+- Sources & Runs page: `refetchInterval: 15_000` (sources and runs) so a manual "Run now"
+  shows progress. TanStack's default `refetchIntervalInBackground: false` already pauses
+  polling when the tab is hidden. Nowhere else polls.
 - Budget widget: `refetchInterval: 60_000`.
+- Preview rescoring: the campaign form's watched values are debounced 400 ms and only sent
+  when `criteriaSchema`/`thresholdsSchema` accept them; `staleTime: 0`.
 
 ## Table
 
@@ -91,7 +102,10 @@ TanStack Table (`@tanstack/react-table`) for inbox and sources. Rules:
 - Row selection for bulk actions via `enableRowSelection`; selected ids feed
   `leads.bulkUpdate`.
 - Expanded row (score breakdown) via `getExpandedRowModel`; only one expanded at a time
-  unless the user shift-clicks.
+  unless the user shift-clicks. The list row carries no evidence, so the expanded row
+  runs `leads.get` for that id; the panel shares the same cache entry.
+- Sources and runs are small lists rendered with the plain table primitives, not TanStack
+  Table.
 - Keep the table component dumb: it receives `data`, `columns`, callbacks. Data fetching
   happens in the page/view component above it.
 - Column visibility persisted server-side later; for now it's in URL or default.

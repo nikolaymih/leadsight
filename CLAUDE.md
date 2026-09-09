@@ -42,7 +42,7 @@ in the same PR so the next task inherits it.
 packages/core       domain: types (Zod), Drizzle schema, db queries, rules, sources, extractor, draft, scoring, pipeline, notifier contract. No framework deps.
 packages/contract   oRPC contract: Zod wire schemas + routes. Consumed by api and web.
 apps/api            Fastify 5: Better Auth, oRPC handler, scheduler, DB client.        (complete)
-apps/web            Next.js 15 App Router dashboard.                                  (not started)
+apps/web            Next.js 15 App Router dashboard.                                  (complete; notifier settings await step 9)
 docs/               design.md, ui-brief.md
 .claude/skills/     conventions per area (see router above)
 ```
@@ -59,7 +59,9 @@ pnpm test            vitest across workspaces      — must pass before commit
 pnpm db:generate     drizzle-kit generate (needs DATABASE_URL)
 pnpm db:migrate      drizzle-kit migrate (needs DATABASE_URL)
 pnpm dev:api         tsx watch apps/api            (reads the root .env — copy .env.example)
-pnpm dev:web         next dev                      (once apps/web exists)
+pnpm dev:web         next dev on :3000             (API on :3001; NEXT_PUBLIC_API_URL is inlined at build time)
+pnpm --filter @leadsight/web build   next build — run before pushing web changes; it is the bundle check
+                                     (typecheck does not catch Node-only imports reaching the browser)
 docker compose up db local Postgres 17
 ```
 
@@ -78,7 +80,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 | DB                          | drizzle-orm + drizzle-kit, postgres (postgres.js)  |
 | API framework               | fastify 5, fastify-plugin, @fastify/cors           |
 | API contract                | @orpc/contract, @orpc/server, @orpc/client, @orpc/tanstack-query (@orpc/openapi later) |
-| Auth                        | better-auth (+ organization, admin plugins), @daveyplate/better-auth-ui |
+| Auth                        | better-auth (+ organization, admin plugins); auth screens are hand-built (better-auth-ui rejected for its peer list) |
 | Scheduling                  | node-cron (BullMQ + Redis only if a second worker is needed) |
 | HTTP out                    | native fetch                                       |
 | RSS                         | rss-parser                                         |
@@ -90,7 +92,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 | Tables                      | @tanstack/react-table (+ @tanstack/react-virtual if needed) |
 | URL state                   | nuqs                                               |
 | Forms                       | react-hook-form + @hookform/resolvers (zod)        |
-| UI                          | tailwindcss, shadcn/ui (radix), lucide-react, sonner |
+| UI                          | tailwindcss v4, shadcn-style primitives hand-written on the `radix-ui` monopackage, lucide-react, sonner |
 | Lint / format               | @biomejs/biome (react + next rule domains enabled)  |
 | Tests                       | vitest, @testing-library/react, playwright (smoke) |
 | Runtime tooling             | tsx, typescript 5                                  |
@@ -99,6 +101,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 
 - Nothing offer-specific in code. Campaign content is data.
 - `packages/core` never imports a framework. `apps/web` never imports `core` or `api`.
+  `packages/contract` imports only `@leadsight/core/types` (Zod-only entry), never the core barrel.
 - Every business query filters by `organization_id`. Org comes from the session, never from input.
 - `applyRules` stays pure; any change comes with tests.
 - Generated Drizzle migrations committed to git; `push` only for local throwaway work.
@@ -113,6 +116,6 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 5. ~~Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.~~ Done — `packages/core/src/pipeline/`, `apps/api/src/plugins/{pipeline,scheduler}.ts`.
 6. ~~oRPC procedures for campaigns, sources, leads, runs (real implementations).~~ Done — `apps/api/src/orpc/{context,error-map,mappers}.ts`, `procedures/*`; only `campaigns.draft` is still a stub.
 7. ~~Campaign draft endpoint (LLM-generated draft from chat + URLs).~~ Done — `packages/core/src/draft/`, `extractor/chain.ts` shared with the extractor, `campaigns.draft`.
-8. `apps/web`: shell, auth screens, inbox, lead panel, campaign setup chat, sources & runs, settings — per `docs/ui-brief.md`.
-9. Notifiers (Slack, email digest).
+8. ~~`apps/web`: shell, auth screens, inbox, lead panel, campaign setup chat, sources & runs, settings — per `docs/ui-brief.md`.~~ Done — `apps/web/src`; every screen smoke-tested in a browser against the live API. Slack/email settings are placeholders until step 9.
+9. Notifiers (Slack, email digest): nodemailer transport behind `apps/api/src/mailer.ts`, per-campaign Slack webhook + digest recipients (needs a schema addition; the UI's Integrations tab and campaign settings already reserve the spot).
 10. Deploy: Dockerfiles for api and web, compose for the hosting machine, migration step.
