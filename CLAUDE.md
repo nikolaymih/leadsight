@@ -2,8 +2,8 @@
 
 Internal name. `leadsight.ai` is an existing competitor, so rename before any public release.
 
-Campaign-driven social lead finder. Sources (Google search over Reddit/LinkedIn/X public pages,
-Google Alerts RSS, optionally the Reddit API) produce posts;
+Campaign-driven social lead finder. Sources (web search via Exa/Tavily over Reddit/LinkedIn/X
+public pages, Google Alerts RSS; the Reddit API adapters are feature-flagged off) produce posts;
 an LLM extracts evidence per campaign; a deterministic rules engine scores it; results land
 in a ranked inbox. Nothing offer-specific in code — campaigns are data.
 
@@ -24,7 +24,7 @@ cost of reading is small, the cost of drifting from conventions is a rewrite.
 | Endpoints, request/response shapes, API errors, the typed client               | `orpc-contract`             |
 | Fastify app, plugins, scheduler, health, CORS, logging, shutdown, auth mount   | `fastify`                   |
 | Login, sessions, users, orgs, members, invites, roles, cookies                  | `better-auth`               |
-| Sources, Google search, Reddit, RSS/Alerts, hydrators, active hours, LLM calls, prompts, extraction, scoring, budgets, notifiers, pipeline run | `pipeline` |
+| Sources, web search (Exa, Tavily), Reddit, RSS/Alerts, hydrators, active hours, LLM calls, prompts, extraction, scoring, budgets, notifiers, pipeline run | `pipeline` |
 | Pages, components, forms, side panels, shortcuts, styling, shadcn, auth screens | `nextjs`                    |
 | Data fetching in the web app, mutations, cache, optimistic updates, tables      | `tanstack`                  |
 
@@ -86,7 +86,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 | Auth                        | better-auth (+ organization, admin plugins); auth screens are hand-built (better-auth-ui rejected for its peer list) |
 | Scheduling                  | node-cron (BullMQ + Redis only if a second worker is needed) |
 | HTTP out                    | native fetch                                       |
-| Web search                  | exa-js, @tavily/core — the `web_search` source; the Reddit Data API request was denied (2026-09-16, `docs/reddit-access.md`), so search over public pages is how Reddit, LinkedIn and X are discovered. Two providers so one outage or quota does not blind the pipeline. |
+| Web search                  | exa-js, @tavily/core — two providers behind the `web_search` source so one outage or used-up free tier never blinds discovery (Reddit API denied, Google Custom Search closed to new customers). |
 | RSS                         | rss-parser                                         |
 | LLM                         | openai SDK pointed at Groq/Gemini OpenAI-compatible endpoints |
 | Email                       | nodemailer                                         |
@@ -115,7 +115,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 
 1. ~~`apps/api` skeleton: env.ts, app.ts, server.ts, db plugin, Better Auth plugin, oRPC plugin with a stub router, health route. `docker-compose.yml`. First migration generated and applied.~~ Done — `apps/api/src`, `packages/core/drizzle/0000_init.sql`.
 2. ~~`packages/core/src/errors.ts`, `db/` query module, `test/db.ts` (`withTestDb`) and seed helpers.~~ Done — `packages/core/src/{errors.ts,db/,test/}`, `@leadsight/core/test`.
-3. **web_search source (Exa, Tavily) + RSS source; Reddit API adapters feature-flagged.** In progress — done: `RssSource`, hydrators, registry with feature flags, `google_search` (Google CSE) as the interim search source (2026-09-09). Open: the `web_search` kind backed by `exa-js` / `@tavily/core` with the same query/budget/back-off shape as `google_search`. The Reddit Data API request was denied 2026-09-16; the two `reddit_*` adapters stay disabled unless `REDDIT_CLIENT_ID` is set, and nothing scrapes reddit.com (`docs/reddit-access.md`).
+3. ~~web_search source (Exa, Tavily) + RSS source; Reddit API adapters feature-flagged.~~ Done — `packages/core/src/sources/web-search/` (SearchProvider, Exa and Tavily providers, rotator, pure query helpers), monthly budgets in `extractor/budget.ts` (90% back-off, 100% hard stop), `RssSource`, per-platform hydrators, registry feature flags. `google_search` removed (migration `0003` converts existing rows). The Reddit Data API request was denied 2026-09-16; the two `reddit_*` adapters stay disabled unless `REDDIT_CLIENT_ID` is set, and nothing scrapes reddit.com (`docs/reddit-access.md`).
 4. ~~Extractor: providers, budget, few-shot, `LlmExtractor` with fake-provider tests. Prompt v1.~~ Done — `packages/core/src/extractor/`, `PROMPT_VERSION = "2026-09-08.1"`.
 5. ~~Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.~~ Done — `packages/core/src/pipeline/`, `apps/api/src/plugins/{pipeline,scheduler}.ts`.
 6. ~~oRPC procedures for campaigns, sources, leads, runs (real implementations).~~ Done — `apps/api/src/orpc/{context,error-map,mappers}.ts`, `procedures/*`; only `campaigns.draft` is still a stub.
@@ -126,6 +126,6 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 
 All ten steps are done.
 
-**Source strategy update (2026-09-09, denial recorded 2026-09-24).** The Reddit Data API request (ticket 18465893) was denied on 2026-09-16; do not re-apply (`docs/reddit-access.md`). Reddit stays a priority platform, covered by `web_search` (Exa / Tavily, next-steps item 3) plus Google Alerts RSS. Until `web_search` ships, `google_search` (Google Programmable Search over each platform's public pages; `GOOGLE_CSE_KEY`/`GOOGLE_CSE_CX`, 100 free queries/day with a budget + 2 h back-off) is the primary source for Reddit, LinkedIn and X, Google Alerts RSS is the secondary net, and the `reddit_*` kinds are feature-flagged off unless credentials exist. Per-source `activeHours` slows polling overnight. Never scrape reddit.com for discovery.
+**Source strategy (2026-09-24).** The Reddit Data API request (ticket 18465893) was denied on 2026-09-16; do not re-apply (`docs/reddit-access.md`). Google's Custom Search JSON API is closed to new customers and shuts down 2027-01-01, so it is not an option either. `web_search` (Exa and Tavily, rotated, `EXA_API_KEY`/`TAVILY_API_KEY`) is the primary source for Reddit, LinkedIn and X; Google Alerts RSS is the secondary net; the `reddit_*` kinds are feature-flagged off. Without either search key the app still starts and web_search sources report "not configured". Per-source `activeHours` slows polling overnight. Never scrape reddit.com for discovery.
 
-Next: run the pipeline end-to-end with real credentials (Groq, Google CSE) and replace hand-authored fixtures with recordings; zod 4 / Next 16 / react-table 9 upgrades; a chat notifier when wanted.
+Next: run the pipeline end-to-end with real credentials (Groq, Exa and/or Tavily) and replace hand-authored fixtures with recordings; zod 4 / Next 16 / react-table 9 upgrades; a chat notifier when wanted.

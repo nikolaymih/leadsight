@@ -5,16 +5,20 @@ import {
   createBudget,
   createCampaignDrafter,
   createDbBudgetStore,
-  createDbSearchBudgetStore,
+  createDbWebSearchBudgetStore,
   createEmailDigestNotifier,
+  createExaProvider,
   createGeminiProvider,
   createGroqProvider,
   createLlmExtractor,
-  createSearchBudget,
   createSourceRegistry,
-  DEFAULT_SEARCH_DAILY_QUERIES,
+  createTavilyProvider,
+  createWebSearchBudget,
+  EXA,
   type PipelineDeps,
-  type SearchBudget,
+  type SearchProvider,
+  TAVILY,
+  type WebSearchBudget,
 } from "@leadsight/core";
 import fp from "fastify-plugin";
 import type { Env } from "../env.js";
@@ -25,8 +29,7 @@ import type { Env } from "../env.js";
 
 export type Pipeline = Omit<PipelineDeps, "sourceIds" | "maxCandidatesPerCampaign"> & {
   budget: Budget;
-  searchBudget: SearchBudget;
-  searchConfigured: boolean;
+  webSearchBudget: WebSearchBudget;
   /** Configured providers in fallback order. */
   providerNames: readonly string[];
   drafterFor(organizationId: string): CampaignDrafter;
@@ -44,29 +47,34 @@ export interface PipelinePluginOptions {
 
 export const pipelinePlugin = fp<PipelinePluginOptions>(
   async (app, { env }) => {
-    const searchBudget = createSearchBudget({
-      store: createDbSearchBudgetStore(app.db),
-      dailyCap: env.GOOGLE_CSE_DAILY_QUERIES ?? DEFAULT_SEARCH_DAILY_QUERIES,
-    });
-    const searchConfigured = Boolean(env.GOOGLE_CSE_KEY && env.GOOGLE_CSE_CX);
+    // Web search: whichever of Exa / Tavily has a key, Exa first. With neither, the app still
+    // starts and web_search sources report "not configured" in their last_error.
+    const webSearchProviders: SearchProvider[] = [];
+    const caps: Record<string, number | null> = {};
+    if (env.EXA_API_KEY) {
+      webSearchProviders.push(createExaProvider({ apiKey: env.EXA_API_KEY }));
+      caps[EXA] = env.EXA_MONTHLY_SEARCHES;
+    }
+    if (env.TAVILY_API_KEY) {
+      webSearchProviders.push(createTavilyProvider({ apiKey: env.TAVILY_API_KEY }));
+      caps[TAVILY] = env.TAVILY_MONTHLY_CREDITS;
+    }
+    const webSearchBudget = createWebSearchBudget({ store: createDbWebSearchBudgetStore(app.db), caps });
     const registry = createSourceRegistry({
       userAgent: env.REDDIT_USER_AGENT,
-      // Optional and rarely approved (docs/reddit-access.md); reddit_* sources are disabled without it.
+      // Our Reddit Data API request was denied (docs/reddit-access.md); reddit_* sources stay disabled without it.
       reddit:
         env.REDDIT_CLIENT_ID && env.REDDIT_CLIENT_SECRET
           ? { clientId: env.REDDIT_CLIENT_ID, clientSecret: env.REDDIT_CLIENT_SECRET }
           : null,
-      google: searchConfigured ? { key: env.GOOGLE_CSE_KEY ?? "", cx: env.GOOGLE_CSE_CX ?? "" } : null,
-      canSearch: () => searchBudget.canQuery(),
+      webSearchProviders,
+      webSearchBudget,
     });
-    if (!searchConfigured) {
-      app.log.warn({}, "GOOGLE_CSE_KEY/GOOGLE_CSE_CX not set: google_search sources are disabled");
+    if (webSearchProviders.length === 0) {
+      app.log.warn({}, "EXA_API_KEY and TAVILY_API_KEY not set: web_search sources are not configured");
     }
     if (!env.REDDIT_CLIENT_ID || !env.REDDIT_CLIENT_SECRET) {
-      app.log.info(
-        {},
-        "Reddit API not configured: reddit_subreddit/reddit_search sources are disabled (optional)",
-      );
+      app.log.info({}, "Reddit API not configured: reddit_subreddit/reddit_search sources are disabled");
     }
 
     const providers: ChatProvider[] = [];
@@ -94,8 +102,7 @@ export const pipelinePlugin = fp<PipelinePluginOptions>(
       notifiers: [createEmailDigestNotifier({ db: app.db, mailer: app.mailer, webOrigin: env.WEB_ORIGIN })],
       logger: app.log,
       budget,
-      searchBudget,
-      searchConfigured,
+      webSearchBudget,
       providerNames: providers.map((p) => p.name),
       extractorFor: (organizationId) => createLlmExtractor({ providers, budget, organizationId, log }),
       drafterFor: (organizationId) =>

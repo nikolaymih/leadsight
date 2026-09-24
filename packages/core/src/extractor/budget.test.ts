@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { withTestDb } from "../test/db.js";
 import { TEST_ORG } from "../test/seed.js";
 import {
+  budgetState,
   createBudget,
   createDbBudgetStore,
-  createDbSearchBudgetStore,
-  createMemorySearchBudgetStore,
-  createSearchBudget,
-  SEARCH_BACKOFF_MIN,
-  searchPollIntervalMin,
+  createDbWebSearchBudgetStore,
+  createMemoryWebSearchBudgetStore,
+  createWebSearchBudget,
+  WEB_SEARCH_BACKOFF_MIN,
+  webSearchPollIntervalMin,
 } from "./budget.js";
 
 describe("db-backed budget store", () => {
@@ -30,40 +31,66 @@ describe("db-backed budget store", () => {
     }));
 });
 
-describe("search query budget", () => {
-  it("allows queries until 90% of the daily cap, then backs google_search off to 2h until midnight UTC", async () => {
-    let clock = new Date("2026-09-09T10:00:00Z");
-    const store = createMemorySearchBudgetStore(() => clock);
-    const budget = createSearchBudget({ store, dailyCap: 100, now: () => clock });
+describe("web search monthly budget", () => {
+  it("moves ok → backoff at 90% → exhausted at 100% per provider, and resets on the 1st (UTC)", async () => {
+    let clock = new Date("2026-09-24T10:00:00Z");
+    const store = createMemoryWebSearchBudgetStore(() => clock);
+    const budget = createWebSearchBudget({ store, caps: { exa: 1000, tavily: 1000 }, now: () => clock });
 
-    await budget.record("org", 89);
-    expect(await budget.canQuery()).toBe(true);
-    expect(searchPollIntervalMin(30, await budget.canQuery())).toBe(30);
+    await budget.record("org", "exa", 899);
+    expect(await budget.state("exa")).toBe("ok");
+    expect(await budget.shouldBackOff()).toBe(false);
 
-    await budget.record("org", 1);
-    expect(await budget.status()).toEqual({ queriesUsedToday: 90, dailyCap: 100 });
-    expect(await budget.canQuery()).toBe(false);
-    expect(searchPollIntervalMin(30, false)).toBe(SEARCH_BACKOFF_MIN);
-    // A source that already polls slower than the back-off keeps its own interval.
-    expect(searchPollIntervalMin(240, false)).toBe(240);
+    await budget.record("org", "exa", 1);
+    expect(await budget.status("exa")).toEqual({
+      provider: "exa",
+      usedThisMonth: 900,
+      monthlyCap: 1000,
+      state: "backoff",
+    });
+    // Tavily is still under 90%, so sources keep their own interval.
+    expect(await budget.shouldBackOff()).toBe(false);
 
-    // Midnight UTC resets the counter.
-    clock = new Date("2026-09-10T00:00:01Z");
-    expect(await budget.status()).toEqual({ queriesUsedToday: 0, dailyCap: 100 });
-    expect(await budget.canQuery()).toBe(true);
+    await budget.record("org", "tavily", 950);
+    expect(await budget.shouldBackOff()).toBe(true);
+    expect(webSearchPollIntervalMin(30, true)).toBe(WEB_SEARCH_BACKOFF_MIN);
+    expect(webSearchPollIntervalMin(240, true)).toBe(240);
+    expect(webSearchPollIntervalMin(30, false)).toBe(30);
 
-    expect(await createSearchBudget({ store, dailyCap: null }).canQuery()).toBe(true);
+    await budget.record("org", "exa", 100);
+    expect(await budget.state("exa")).toBe("exhausted");
+
+    clock = new Date("2026-10-01T00:00:01Z");
+    expect(await budget.status("exa")).toMatchObject({ usedThisMonth: 0, state: "ok" });
+    expect(await budget.shouldBackOff()).toBe(false);
   });
 
-  it("db store: records search.usage events and sums them across organizations", () =>
+  it("uncapped providers are always ok; no providers never backs off", async () => {
+    const budget = createWebSearchBudget({ store: createMemoryWebSearchBudgetStore(), caps: { exa: null } });
+    await budget.record("org", "exa", 1_000_000);
+    expect(await budget.state("exa")).toBe("ok");
+    expect(
+      await createWebSearchBudget({ store: createMemoryWebSearchBudgetStore(), caps: {} }).shouldBackOff(),
+    ).toBe(false);
+    expect(budgetState(90, 100)).toBe("backoff");
+    expect(budgetState(100, 100)).toBe("exhausted");
+  });
+
+  it("db store: records search.usage events per provider and sums them across organizations", () =>
     withTestDb(async (db) => {
-      const budget = createSearchBudget({ store: createDbSearchBudgetStore(db), dailyCap: 10 });
-      await budget.record(TEST_ORG, 2);
-      await budget.record("org_other", 6);
-      await budget.record(TEST_ORG, 0); // no-op
-      expect(await budget.status()).toEqual({ queriesUsedToday: 8, dailyCap: 10 });
-      expect(await budget.canQuery()).toBe(true);
-      await budget.record(TEST_ORG, 1);
-      expect(await budget.canQuery()).toBe(false);
+      const budget = createWebSearchBudget({
+        store: createDbWebSearchBudgetStore(db),
+        caps: { exa: 10, tavily: 10 },
+      });
+      await budget.record(TEST_ORG, "exa", 2);
+      await budget.record("org_other", "exa", 6);
+      await budget.record(TEST_ORG, "tavily", 3);
+      await budget.record(TEST_ORG, "exa", 0); // no-op
+      expect(await budget.status("exa")).toMatchObject({ usedThisMonth: 8, state: "ok" });
+      expect(await budget.status("tavily")).toMatchObject({ usedThisMonth: 3 });
+      await budget.record(TEST_ORG, "exa", 1);
+      expect(await budget.state("exa")).toBe("backoff");
+      await budget.record(TEST_ORG, "exa", 1);
+      expect(await budget.state("exa")).toBe("exhausted");
     }));
 });

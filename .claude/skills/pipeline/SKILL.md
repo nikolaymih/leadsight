@@ -1,6 +1,6 @@
 ---
 name: pipeline
-description: How the LeadSight ingestion and scoring pipeline works in packages/core — Source adapters (Google Programmable Search as the primary source, RSS/Google Alerts, the optional Reddit API, per-platform hydrators for Reddit, LinkedIn and X), the LLM Extractor with Groq→Gemini fallback, the token and search-query budgets with back-off, active-hours scheduling, the rules engine, labels/few-shot, notifiers, and the scheduler loop. Load this for any task about polling, scraping, feeds, Google search, CSE, Reddit, RSS, Google Alerts, LinkedIn/X post fetching, LLM calls, prompts, extraction, scoring, evidence, verdicts, confidence, rescoring, email digests, or the words "source", "adapter", "extractor", "provider", "budget", "batch", "cursor", "dedupe", "active hours".
+description: How the LeadSight ingestion and scoring pipeline works in packages/core — Source adapters (web search via Exa and Tavily as the primary source, RSS/Google Alerts, the feature-flagged Reddit API, per-platform hydrators for Reddit, LinkedIn and X), the LLM Extractor with Groq→Gemini fallback, the LLM token budget and monthly web search budgets with back-off and hard stop, active-hours scheduling, the rules engine, labels/few-shot, notifiers, and the scheduler loop. Load this for any task about polling, scraping, feeds, web search, Exa, Tavily, Reddit, RSS, Google Alerts, LinkedIn/X post fetching, LLM calls, prompts, extraction, scoring, evidence, verdicts, confidence, rescoring, email digests, or the words "source", "adapter", "extractor", "provider", "budget", "batch", "cursor", "dedupe", "active hours".
 ---
 
 # Pipeline (packages/core)
@@ -11,11 +11,11 @@ Read `docs/design.md` §3–§6 first; this skill is the implementation guide fo
 packages/core/src/
   sources/    source.ts (Source, SourceDeps, SourceRunResult), registry.ts (createSourceRegistry: kinds,
               enabledKinds, hydrate), config.ts (validateSourceConfig), text.ts + url.ts (pure helpers, tested),
-              google/{query,client,search}.ts (primary), rss.ts, reddit/{client,listing,subreddit,search}.ts
-              (optional), hydrate/{index,reddit,linkedin,x}.ts
+              web-search/{query,provider,exa,tavily,rotator,source}.ts (primary), rss.ts,
+              reddit/{client,listing,subreddit,search}.ts (feature-flagged off), hydrate/{index,reddit,linkedin,x}.ts
   extractor/  extractor.ts (Extractor, ExtractionInput/Result, EXTRACT_BATCH_SIZE), llm-extractor.ts
               (createLlmExtractor, parseResponse), prompt.ts (PROMPT_VERSION, SYSTEM_PROMPT, buildUserPrompt),
-              fewshot.ts (selectFewShot, formatExample), budget.ts (LLM token budget + search query budget),
+              fewshot.ts (selectFewShot, formatExample), budget.ts (LLM token budget + monthly web search budget),
               providers/{provider,openai-compatible,groq,gemini}.ts
   rules/      index.ts (pure), tested
   notify/     notifier.ts (contract), mailer.ts (transport contract), email.ts (digest)
@@ -26,18 +26,20 @@ packages/core/src/
 
 ## Sources
 
-Source strategy (2026-09-09): **`google_search` is the primary source** for Reddit, LinkedIn
-and X; `rss` (Google Alerts) is the free secondary net; the Reddit API kinds are optional and
-disabled without credentials (`docs/reddit-access.md`). Never scrape reddit.com for
-discovery; the only reddit.com GETs are single public post pages during hydration.
+Source strategy (2026-09-24): **`web_search` (Exa + Tavily) is the primary source** for
+Reddit, LinkedIn and X; `rss` (Google Alerts) is the free secondary net; the Reddit API kinds
+are feature-flagged off (our request was denied, `docs/reddit-access.md`). Google Custom
+Search is not an option (closed to new customers, shut down 2027-01-01) — don't reintroduce
+it. Never scrape reddit.com for discovery; the only reddit.com GETs are single public post
+pages during hydration.
 
 - Implement the `Source<C>` interface from `docs/design.md`. `validateConfig` uses
   `sourceConfigSchema` from core's `types.ts` — one definition, re-exported by the contract
   for the web app. Core never imports the contract (the contract depends on core).
   `RawPost` also lives in `types.ts`.
 - Adapters get their outside world through `SourceDeps` (`fetch`, `userAgent`, `now`, `sleep`,
-  Reddit credentials) at construction — `createSourceRegistry({ userAgent, google?, reddit?,
-  canSearch?, fetch? })` builds them all. A kind without credentials is registered as a
+  Reddit credentials) at construction — `createSourceRegistry({ userAgent, webSearchProviders?,
+  webSearchBudget?, reddit?, fetch? })` builds them all. A kind without credentials is registered as a
   *disabled* adapter (config validates, `run` throws a non-retryable `ProviderError` naming the
   missing env; `registry.enabledKinds()` / `isEnabled(kind)` tell the API and the UI). `run(config,
   cursor)` therefore keeps the shape in design.md and tests inject a fake fetch. Never reach for
@@ -49,17 +51,37 @@ discovery; the only reddit.com GETs are single public post pages during hydratio
   is Zod-parsed item by item (`redditPostSchema`, oEmbed).
 - All HTTP via `deps.fetch` with `AbortSignal.timeout(REQUEST_TIMEOUT_MS)` and the
   User-Agent from deps.
-- **Google search** (`google/`): `query.ts` is pure and tested — `buildSearchQuery` →
-  `site:<scope> ("p1" OR "p2" …)` (phrases trimmed, de-quoted, deduped, max 10; scope from
-  config or `DEFAULT_SITE_SCOPE[platform]`, none for `web`), `searchRequestUrl` (`num=10`,
-  `dateRestrict=<lookback>`, `sort=date`), `isPostUrl(platform, url)` (only `/comments/`,
-  `/posts/`|`/pulse/`, `/status/`, facebook post paths), `resultToRawPost` (snippet post,
-  `externalId = canonicalUrl(link)`, date from pagemap metatags). `client.ts` does one GET per
-  page and maps errors (403 `dailyLimitExceeded` / 429 → non-retryable quota error, 5xx
-  retryable, network wrapped). `search.ts` runs page 1, page 2 only if page 1 had 10 results
-  and the budget gate still says yes; a page-2 failure is a warning, a page-1 failure throws.
-  It reports `usage.searchQueries` (0–2) and, when `canQuery()` is false, returns nothing with
-  `BUDGET_SKIP_WARNING`. Adapters never touch the DB: the **pipeline** books usage.
+- **Web search** (`web-search/`), layered so each piece is testable alone:
+  - `query.ts` (pure): `normalizePhrases` (trim, de-quote, dedupe, max 10), `buildOrQuery`
+    (`"p1" OR "p2"`), `packPhrases` (greedy into queries ≤ `MAX_QUERY_CHARS` = 400, Tavily's
+    limit; an over-long phrase is truncated at a word boundary), `parseSiteScope` →
+    `{ host, pathPrefix }` (default per platform, none for `web`), `inScope` (host incl.
+    subdomains + path prefix — providers only filter by domain), `isPostUrl`, `hitToRawPost`
+    (snippet post, `externalId = canonicalUrl(url)`), `dedupePosts`, `lookbackStart`.
+  - `provider.ts`: `SearchProvider { name, search(req) → { hits, units } }`,
+    `SearchProviderError` with a `failure` kind (`quota | rate_limit | auth | transient |
+    invalid`), `failureForStatus` (401/403 auth, 402/432/433 quota, 429 rate limit, 5xx
+    transient). Providers never retry and never touch budgets.
+  - `exa.ts` / `tavily.ts`: thin SDK wrappers. The SDK client is injectable (`client?:
+    { search(query, options) }`), which is how tests run with fakes — no network. Exa:
+    `type: "auto"`, `includeDomains`, `startPublishedDate`, `numResults`, highlights as the
+    snippet; 1 unit per request; errors carry `statusCode`. Tavily: `searchDepth: "basic"`,
+    `includeDomains`, `startDate` (YYYY-MM-DD), `maxResults`, `includeUsage`; units =
+    `usage.credits ?? 1`; its SDK throws plain Errors (`"<status> Error: …"` or the API text
+    without a status), so `classifyTavilyError` reads the message.
+  - `rotator.ts`: `createSearchRotator({ providers, budget?, now? })`. Candidates = providers
+    not at 100% and not cooling down; under-90% before 90–100%, round-robin within a tier.
+    Falls through on failure; cooldowns in memory (quota → next UTC month, rate limit 15 min,
+    auth 60 min). Returns `{ hits, provider, usage }`, `{ skipped, reason }` when nobody can be
+    asked, or throws `WebSearchUnavailableError` listing every provider's failure. Only
+    successful calls produce usage.
+  - `source.ts`: `createWebSearchSource(deps, { rotator })` — up to `MAX_QUERIES_PER_RUN` (2)
+    packed queries, `RESULTS_PER_QUERY` (20), filters scope + post pages, dedupes, returns
+    `usage.webSearch`. First query failing throws; a later one is a warning. The **pipeline**
+    books usage (adapters never touch the DB).
+  - Registry: with no provider, `web_search` is a disabled adapter whose run throws
+    `DISABLED_REASONS.webSearch` ("not configured (EXA_API_KEY and TAVILY_API_KEY unset)");
+    `registry.webSearchProviders()` lists the configured ones in fallback order.
 - **Reddit** (optional): OAuth client-credentials flow (`client_credentials` grant, cached token with
   expiry). Respect `X-Ratelimit-Remaining` / `X-Ratelimit-Reset` headers; if remaining < 5,
   sleep until reset. Endpoints: `/r/{sub}/new.json?limit=100&before=<fullname>` and
@@ -96,7 +118,7 @@ discovery; the only reddit.com GETs are single public post pages during hydratio
 - Insert posts with `onConflictDoNothing` on `(organization_id, platform, external_id)`.
   Then link `post_sources`. A post seen by three sources is one row.
 - Pre-filter (`pipeline/prefilter.ts`): a post is a scoring candidate for a campaign if
-  the source is keyword-scoped (`google_search`, `reddit_search`, `rss`) or title+body contains any campaign
+  the source is keyword-scoped (`web_search`, `reddit_search`, `rss`) or title+body contains any campaign
   keyword (case-insensitive substring; `escapeLike` keeps `%`/`_` literal). It runs **inside
   the candidate query** (`findExtractionCandidates` → `candidateCondition`) so filtered
   posts never occupy the oldest-first batch window; `isCandidate` is the same rule in TS,
@@ -132,15 +154,16 @@ discovery; the only reddit.com GETs are single public post pages during hydratio
   uncapped providers always pass. When every provider is over budget the extractor throws
   `BudgetExhaustedError` — the pipeline must catch it and leave posts unscored, not drop them.
   `budget.status(provider)` feeds `runs.budget`.
-- **Search budget** (same file): `createSearchBudget({ store, dailyCap })` over a
-  `SearchBudgetStore`; `createDbSearchBudgetStore(db)` writes `search.usage` events
-  (`entityId` = `google_cse`, payload `{ queries }`) and sums them from the start of the UTC
-  day. `canQuery()` is false at ≥ 90% of `GOOGLE_CSE_DAILY_QUERIES` (default 100 = free
-  tier). The registry passes `canQuery` to the search adapter as its gate; the pipeline
-  records `usage.searchQueries` after each run (and 1 for a failed request that got an HTTP
-  answer) and, while `canQuery()` is false, only polls `google_search` sources whose last run
-  is ≥ `SEARCH_BACKOFF_MIN` (120) minutes old — so they back off to 2 h until midnight UTC.
-  `searchPollIntervalMin(base, ok)` is the pure form; `integrations.searchBudget` reports it.
+- **Web search budget** (same file): `createWebSearchBudget({ store, caps })` where `caps` has
+  one entry per *configured* provider (monthly cap or null). Units per UTC calendar month from
+  `search.usage` events (`entityId` = provider, payload `{ provider, units }`;
+  `createDbWebSearchBudgetStore(db)`, summed across organizations). `state(provider)`:
+  `ok` < 90% ≤ `backoff` < 100% ≤ `exhausted` (`budgetState(used, cap)` is the pure form).
+  The rotator skips `exhausted` (hard stop) and prefers `ok`. `shouldBackOff()` is true when
+  every configured provider is past `ok`; then the pipeline only polls `web_search` sources
+  whose last run is ≥ `WEB_SEARCH_BACKOFF_MIN` (120) minutes old. The pipeline records each
+  run's `usage.webSearch`. Caps come from `EXA_MONTHLY_SEARCHES` / `TAVILY_MONTHLY_CREDITS`
+  (default 1000); `integrations.webSearch` reports per-provider state.
 - Few-shot: `selectFewShot(labels, limit)` alternates positive/negative from newest;
   `formatExample` truncates to 600 chars and appends the reviewer note. The pipeline loads
   labels with `listRecentLabels` and passes the selection in `ExtractionInput.examples`.
@@ -240,10 +263,14 @@ extractor and notifiers — extend that test when you add a step.
   `src/test/fixtures/<source>/…`. No msw (not approved), no live network.
   The current fixtures are hand-authored from the documented payload shapes — the
   scaffolding sandbox had no egress — so replace them with real recordings once credentials
-  exist (Google CSE first; Reddit only if the API is ever approved) and keep them small.
-- Pure helpers have their own tests: `google/query.test.ts` (query building, URL filter,
-  result mapping), `google/search.test.ts` (paging, budget gate, error handling, registry
-  flags), `extractor/budget.test.ts` (token and search budgets, back-off),
+  exist (Reddit only if the API is ever approved) and keep them small. Web search providers
+  are tested one level up, against fake SDK clients, so there are no HTTP fixtures for them.
+- Pure helpers have their own tests: `web-search/query.test.ts` (phrases, OR-query packing,
+  scope, URL filter, hit mapping, dedupe), `web-search/providers.test.ts` (Exa/Tavily request
+  options, result mapping, error classification, via fake SDK clients),
+  `web-search/rotator.test.ts` (rotation, 90% preference, 100% hard stop, fall-through,
+  cooldowns), `web-search/source.test.ts` (scoping, skip at cap, query splitting, registry
+  flags), `extractor/budget.test.ts` (token and monthly web search budgets, back-off),
   `pipeline/schedule.test.ts` (active hours, due rule), `hydrate/reddit.test.ts`.
 - Extractor: inject a fake provider returning canned JSON; test batching, validation,
   fallback, and budget behavior. Never call a real LLM in tests.

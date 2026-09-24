@@ -4,13 +4,19 @@ import type { RawPost, SourceKind } from "../types.js";
 // (fetch, credentials, clock) at construction through the registry, so `run` keeps
 // the documented shape and tests inject a fake fetch.
 
+/** Billable units one web search provider charged for this run (requests for Exa, credits for Tavily). */
+export interface WebSearchUsage {
+  provider: string;
+  units: number;
+}
+
 export interface SourceRunResult {
   posts: RawPost[];
   /** Opaque, persisted to sources.cursor. Return it even on partial failure. */
   nextCursor: unknown;
   warnings: string[];
-  /** Metered external calls made by this run; the pipeline books them against the budget. */
-  usage?: { searchQueries: number };
+  /** Metered external calls made by this run; the pipeline books them against the budgets. */
+  usage?: { webSearch: WebSearchUsage[] };
 }
 
 export interface Source<C = unknown> {

@@ -41,11 +41,11 @@ export async function sumLlmUsageSince(db: DbLike, provider: string, since: Date
   return row?.total ?? 0;
 }
 
-/** Google Programmable Search queries recorded as `search.usage` events since `since`, across organizations. */
+/** Web search units (Exa requests, Tavily credits) recorded as `search.usage` events since `since`, across organizations. */
 export async function sumSearchUsageSince(db: DbLike, provider: string, since: Date): Promise<number> {
   const [row] = await db
     .select({
-      total: sql<number>`coalesce(sum((${events.payload}->>'queries')::int), 0)`.mapWith(Number),
+      total: sql<number>`coalesce(sum((${events.payload}->>'units')::numeric), 0)`.mapWith(Number),
     })
     .from(events)
     .where(and(eq(events.type, "search.usage"), eq(events.entityId, provider), gte(events.createdAt, since)));

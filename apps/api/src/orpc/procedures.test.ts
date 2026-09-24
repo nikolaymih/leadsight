@@ -277,12 +277,12 @@ describe("leads", () => {
   });
 });
 
-describe("google_search sources and active hours", () => {
-  it("creates a google_search source, stores an active-hours schedule, and reports the search budget", async () => {
+describe("web_search sources and active hours", () => {
+  it("creates a web_search source, stores an active-hours schedule, and reports web search as not configured", async () => {
     const campaign = await owner.campaigns.create({ ...draft, name: "Search", suggestedSources: [] });
     const created = await owner.sources.create({
       campaignId: campaign.id,
-      kind: "google_search",
+      kind: "web_search",
       config: {
         platform: "reddit",
         phrases: ["looking for a cto", "need a technical cofounder"],
@@ -291,7 +291,7 @@ describe("google_search sources and active hours", () => {
       activeHours: { tz: "Europe/Sofia", from: 8, to: 23, offInterval: 180 },
     });
     expect(created).toMatchObject({
-      kind: "google_search",
+      kind: "web_search",
       config: {
         platform: "reddit",
         phrases: ["looking for a cto", "need a technical cofounder"],
@@ -312,18 +312,26 @@ describe("google_search sources and active hours", () => {
     await expect(
       owner.sources.create({
         campaignId: campaign.id,
-        kind: "google_search",
+        kind: "web_search",
         config: { platform: "x", phrases: [] },
       }),
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
-    // No GOOGLE_CSE_* in the test env: the kind is disabled, and a manual run says why.
-    const budget = await member.integrations.searchBudget();
-    expect(budget).toMatchObject({ configured: false, queriesUsedToday: 0, dailyCap: 100 });
-    expect(budget.enabledSourceKinds).toEqual(["rss"]);
+    // No EXA_API_KEY / TAVILY_API_KEY in the test env: the app starts, the kind reports
+    // "not configured", and a manual run says why.
+    const status = await member.integrations.webSearch();
+    expect(status).toEqual({
+      configured: false,
+      backOff: false,
+      providers: [
+        { name: "exa", configured: false, usedThisMonth: 0, monthlyCap: null, state: "not_configured" },
+        { name: "tavily", configured: false, usedThisMonth: 0, monthlyCap: null, state: "not_configured" },
+      ],
+      enabledSourceKinds: ["rss"],
+    });
     await expect(owner.sources.run({ id: created.id })).rejects.toMatchObject({
       code: "BAD_GATEWAY",
-      message: expect.stringMatching(/GOOGLE_CSE_KEY/),
+      message: expect.stringMatching(/not configured \(EXA_API_KEY and TAVILY_API_KEY unset\)/),
     });
   });
 });

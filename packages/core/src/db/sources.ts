@@ -163,7 +163,7 @@ export function describeSource(source: Pick<Source, "kind" | "config">): string 
   const c = source.config;
   const str = (key: string) => (typeof c[key] === "string" ? (c[key] as string) : undefined);
   switch (source.kind) {
-    case "google_search": {
+    case "web_search": {
       const phrases = Array.isArray(c.phrases)
         ? (c.phrases as unknown[]).filter((p) => typeof p === "string")
         : [];

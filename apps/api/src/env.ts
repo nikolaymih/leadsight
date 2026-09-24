@@ -7,6 +7,12 @@ const optionalInt = z.preprocess(
   (v) => (v === "" || v === undefined ? undefined : Number(v)),
   z.number().int().positive().optional(),
 );
+/** Positive int with a default; an empty value (`KEY=` in .env) counts as unset. */
+const intWithDefault = (fallback: number) =>
+  z.preprocess(
+    (v) => (v === "" || v === undefined ? undefined : Number(v)),
+    z.number().int().positive().default(fallback),
+  );
 const flag = (fallback: "true" | "false") =>
   z
     .enum(["true", "false"])
@@ -32,10 +38,12 @@ const envSchema = z
     REDDIT_CLIENT_ID: optionalString,
     REDDIT_CLIENT_SECRET: optionalString,
     REDDIT_USER_AGENT: z.string().default("leadsight/0.1"),
-    // Google Programmable Search (primary discovery source). Free tier: 100 queries/day.
-    GOOGLE_CSE_KEY: optionalString,
-    GOOGLE_CSE_CX: optionalString,
-    GOOGLE_CSE_DAILY_QUERIES: optionalInt,
+    // Web search (primary discovery source). Either key enables web_search; both rotate.
+    EXA_API_KEY: optionalString,
+    TAVILY_API_KEY: optionalString,
+    /** Monthly caps: Exa counts requests, Tavily counts credits (1 per basic search). */
+    EXA_MONTHLY_SEARCHES: intWithDefault(1000),
+    TAVILY_MONTHLY_CREDITS: intWithDefault(1000),
     GROQ_API_KEY: optionalString,
     GROQ_MODEL: z.string().default("openai/gpt-oss-120b"),
     GROQ_DAILY_TOKENS: optionalInt,

@@ -2,11 +2,13 @@ import type { DbLike } from "../db/client.js";
 import { appendEvent, sumLlmUsageSince, sumSearchUsageSince } from "../db/events.js";
 import type { TokenUsage } from "./extractor.js";
 
-// Daily budgets, all per UTC day and account-level (one API key each), so usage is summed
-// across organizations; the events still carry the org for analytics.
-// - LLM tokens per provider: a provider at ≥ 90% of its cap is skipped for the day.
-// - Google Programmable Search queries: at ≥ 90% of the cap, google_search sources back off
-//   to SEARCH_BACKOFF_MIN until the counter resets at midnight UTC.
+// Budgets are account-level (one API key each), so usage is summed across organizations; the
+// events still carry the org for analytics.
+// - LLM tokens per provider per UTC day: a provider at ≥ 90% of its cap is skipped for the day.
+// - Web search units (Exa requests, Tavily credits) per provider per UTC calendar month:
+//   at ≥ 90% the provider is only used when no provider is below 90%, and web_search sources
+//   back off to WEB_SEARCH_BACKOFF_MIN once every provider is there; at 100% the provider is
+//   never called again until the month rolls over.
 
 export const BUDGET_SOFT_LIMIT = 0.9;
 
@@ -92,84 +94,118 @@ export function startOfUtcDay(d: Date): Date {
 }
 
 // ---------------------------------------------------------------------------
-// Search queries (Google Programmable Search JSON API; free tier = 100 queries/day)
+// Web search (Exa, Tavily): monthly budgets per provider
 // ---------------------------------------------------------------------------
 
-export const SEARCH_PROVIDER = "google_cse";
-/** Poll interval forced on google_search sources while the query budget is nearly spent. */
-export const SEARCH_BACKOFF_MIN = 120;
-export const DEFAULT_SEARCH_DAILY_QUERIES = 100;
+/**
+ * `ok` below 90% of the monthly cap, `backoff` from 90%, `exhausted` at 100% (hard stop:
+ * the rotator never calls that provider again until the next UTC month).
+ */
+export type WebSearchBudgetState = "ok" | "backoff" | "exhausted";
 
-export interface SearchBudgetStore {
-  usedSince(since: Date): Promise<number>;
-  record(organizationId: string, queries: number): Promise<void>;
+/** Poll interval floor for web_search sources while no provider is below 90% of its cap. */
+export const WEB_SEARCH_BACKOFF_MIN = 120;
+export const WEB_SEARCH_HARD_LIMIT = 1;
+
+export interface WebSearchBudgetStore {
+  usedSince(provider: string, since: Date): Promise<number>;
+  record(organizationId: string, provider: string, units: number): Promise<void>;
 }
 
-export interface SearchBudget {
-  /** False at ≥ 90% of the daily cap. Always true without a cap. */
-  canQuery(): Promise<boolean>;
-  record(organizationId: string, queries: number): Promise<void>;
-  status(): Promise<{ queriesUsedToday: number; dailyCap: number | null }>;
+export interface WebSearchProviderStatus {
+  provider: string;
+  usedThisMonth: number;
+  monthlyCap: number | null;
+  state: WebSearchBudgetState;
 }
 
-export interface SearchBudgetOptions {
-  store: SearchBudgetStore;
-  /** Queries per UTC day, or null for uncapped. */
-  dailyCap: number | null;
+export interface WebSearchBudget {
+  /** Providers this budget tracks, i.e. the configured ones, in fallback order. */
+  readonly providers: readonly string[];
+  state(provider: string): Promise<WebSearchBudgetState>;
+  record(organizationId: string, provider: string, units: number): Promise<void>;
+  status(provider: string): Promise<WebSearchProviderStatus>;
+  /** True when every configured provider is at ≥ 90% (so sources should poll less often). */
+  shouldBackOff(): Promise<boolean>;
+}
+
+export interface WebSearchBudgetOptions {
+  store: WebSearchBudgetStore;
+  /** Configured providers with their monthly cap (null = uncapped), in fallback order. */
+  caps: Record<string, number | null>;
   now?: () => Date;
 }
 
-export function createSearchBudget(opts: SearchBudgetOptions): SearchBudget {
+export function budgetState(used: number, cap: number | null): WebSearchBudgetState {
+  if (cap === null) return "ok";
+  if (used >= cap * WEB_SEARCH_HARD_LIMIT) return "exhausted";
+  if (used >= cap * BUDGET_SOFT_LIMIT) return "backoff";
+  return "ok";
+}
+
+export function createWebSearchBudget(opts: WebSearchBudgetOptions): WebSearchBudget {
   const now = opts.now ?? (() => new Date());
-  const used = () => opts.store.usedSince(startOfUtcDay(now()));
+  const providers = Object.keys(opts.caps);
+
+  async function status(provider: string): Promise<WebSearchProviderStatus> {
+    const cap = opts.caps[provider] ?? null;
+    const used = await opts.store.usedSince(provider, startOfUtcMonth(now()));
+    return { provider, usedThisMonth: used, monthlyCap: cap, state: budgetState(used, cap) };
+  }
+
   return {
-    async canQuery() {
-      if (opts.dailyCap === null) return true;
-      return (await used()) < opts.dailyCap * BUDGET_SOFT_LIMIT;
-    },
-    record: (organizationId, queries) => opts.store.record(organizationId, queries),
-    async status() {
-      return { queriesUsedToday: await used(), dailyCap: opts.dailyCap };
+    providers,
+    status,
+    state: async (provider) => (await status(provider)).state,
+    record: (organizationId, provider, units) => opts.store.record(organizationId, provider, units),
+    async shouldBackOff() {
+      if (providers.length === 0) return false;
+      const states = await Promise.all(providers.map(async (p) => (await status(p)).state));
+      return states.every((s) => s !== "ok");
     },
   };
 }
 
 /**
- * The interval a google_search source should honour right now: its own while queries are
- * available, otherwise the back-off (never shorter than its own).
+ * The interval a web_search source should honour right now: its own while some provider is
+ * under 90%, otherwise the back-off (never shorter than its own).
  */
-export function searchPollIntervalMin(pollIntervalMin: number, budgetOk: boolean): number {
-  return budgetOk ? pollIntervalMin : Math.max(pollIntervalMin, SEARCH_BACKOFF_MIN);
+export function webSearchPollIntervalMin(pollIntervalMin: number, backOff: boolean): number {
+  return backOff ? Math.max(pollIntervalMin, WEB_SEARCH_BACKOFF_MIN) : pollIntervalMin;
 }
 
-/** Usage lives in `events` as `search.usage` rows; no extra table. */
-export function createDbSearchBudgetStore(db: DbLike): SearchBudgetStore {
+export function startOfUtcMonth(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+}
+
+/** Usage lives in `events` as `search.usage` rows (`entityId` = provider); no extra table. */
+export function createDbWebSearchBudgetStore(db: DbLike): WebSearchBudgetStore {
   return {
-    usedSince: (since) => sumSearchUsageSince(db, SEARCH_PROVIDER, since),
-    async record(organizationId, queries) {
-      if (queries <= 0) return;
+    usedSince: (provider, since) => sumSearchUsageSince(db, provider, since),
+    async record(organizationId, provider, units) {
+      if (units <= 0) return;
       await appendEvent(db, {
         organizationId,
         type: "search.usage",
         entityType: "provider",
-        entityId: SEARCH_PROVIDER,
-        payload: { provider: SEARCH_PROVIDER, queries },
+        entityId: provider,
+        payload: { provider, units },
       });
     },
   };
 }
 
-export function createMemorySearchBudgetStore(now: () => Date = () => new Date()): SearchBudgetStore & {
-  entries: { at: Date; queries: number }[];
+export function createMemoryWebSearchBudgetStore(now: () => Date = () => new Date()): WebSearchBudgetStore & {
+  entries: { provider: string; at: Date; units: number }[];
 } {
-  const entries: { at: Date; queries: number }[] = [];
+  const entries: { provider: string; at: Date; units: number }[] = [];
   return {
     entries,
-    async usedSince(since) {
-      return entries.filter((e) => e.at >= since).reduce((s, e) => s + e.queries, 0);
+    async usedSince(provider, since) {
+      return entries.filter((e) => e.provider === provider && e.at >= since).reduce((s, e) => s + e.units, 0);
     },
-    async record(_organizationId, queries) {
-      entries.push({ at: now(), queries });
+    async record(_organizationId, provider, units) {
+      if (units > 0) entries.push({ provider, at: now(), units });
     },
   };
 }

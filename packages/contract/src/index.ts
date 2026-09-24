@@ -326,12 +326,23 @@ export const contract = {
   },
 
   integrations: {
-    /** Google Programmable Search queries used today vs. the daily cap (google_search sources). */
-    searchBudget: base.route({ method: "GET", path: "/integrations/search-budget" }).output(
+    /** Web search providers (Exa, Tavily): which are configured and how much of each monthly cap is spent. */
+    webSearch: base.route({ method: "GET", path: "/integrations/web-search" }).output(
       z.object({
+        /** False when neither EXA_API_KEY nor TAVILY_API_KEY is set: web_search sources cannot run. */
         configured: z.boolean(),
-        queriesUsedToday: z.number().int(),
-        dailyCap: z.number().int().nullable(),
+        /** True when every configured provider is ≥ 90%: web_search sources poll every 2 h at most. */
+        backOff: z.boolean(),
+        providers: z.array(
+          z.object({
+            name: z.enum(["exa", "tavily"]),
+            configured: z.boolean(),
+            /** Exa: requests; Tavily: credits. */
+            usedThisMonth: z.number(),
+            monthlyCap: z.number().int().nullable(),
+            state: z.enum(["ok", "backoff", "exhausted", "not_configured"]),
+          }),
+        ),
         /** Source kinds the API can run with its current credentials. */
         enabledSourceKinds: z.array(z.string()),
       }),

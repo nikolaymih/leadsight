@@ -159,10 +159,13 @@ function normalizeCriteria(list: unknown[]): unknown[] {
   return items;
 }
 
-/** google_search entries: tolerate a single phrase string, snake_case keys and over-long lists. */
+/**
+ * web_search entries: tolerate a single phrase string, snake_case keys, over-long lists and
+ * the retired `google_search` kind name (same config shape).
+ */
 function normalizeSources(list: unknown[]): unknown[] {
   return list.filter(isRecord).map((s) => {
-    if (s.kind !== "google_search" || !isRecord(s.config)) return s;
+    if ((s.kind !== "web_search" && s.kind !== "google_search") || !isRecord(s.config)) return s;
     const c = s.config;
     const phrases = stringArray(c.phrases ?? c.phrase ?? c.queries ?? c.query)
       .map((p) => p.replace(/["“”]/g, "").trim())
@@ -170,7 +173,7 @@ function normalizeSources(list: unknown[]): unknown[] {
       .slice(0, MAX_SEARCH_PHRASES);
     const siteScope = c.siteScope ?? c.site_scope ?? c.site;
     return {
-      kind: "google_search",
+      kind: "web_search",
       config: {
         platform: c.platform,
         phrases,

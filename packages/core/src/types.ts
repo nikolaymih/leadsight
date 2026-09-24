@@ -122,12 +122,11 @@ export const PLATFORMS = ["reddit", "linkedin", "x", "facebook", "web"] as const
 export type Platform = (typeof PLATFORMS)[number];
 
 /**
- * `google_search` is the primary discovery source (Google Programmable Search over a
- * platform's public pages). `rss` is Google Alerts, the free secondary net. The two Reddit
- * API kinds are optional: they only work when the API app is approved and configured
- * (docs/reddit-access.md).
+ * `web_search` is the primary discovery source (Exa / Tavily search over a platform's public
+ * pages). `rss` is Google Alerts, the free secondary net. The two Reddit API kinds stay
+ * feature-flagged off: the API request was denied (docs/reddit-access.md).
  */
-export const SOURCE_KINDS = ["reddit_subreddit", "reddit_search", "rss", "google_search"] as const;
+export const SOURCE_KINDS = ["reddit_subreddit", "reddit_search", "rss", "web_search"] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 export const SEARCH_LOOKBACKS = ["d1", "d3", "d7"] as const;
@@ -150,15 +149,15 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
 export const sourceConfigSchema = z.discriminatedUnion("kind", [
   z.object({
-    kind: z.literal("google_search"),
+    kind: z.literal("web_search"),
     config: z.object({
       /** Which platform's public pages the query is scoped to; also the platform of every result. */
       platform: z.enum(PLATFORMS),
-      /** Exact phrases a poster would write; OR-ed into one query. */
+      /** Exact phrases a poster would write; OR-ed into as few queries as fit. */
       phrases: z.array(z.string().trim().min(1)).min(1).max(MAX_SEARCH_PHRASES),
-      /** `site:` operand, e.g. `reddit.com/r/startups`. Defaults per platform when omitted. */
+      /** Domain plus optional path, e.g. `reddit.com/r/startups`. Defaults per platform when omitted. */
       siteScope: z.string().trim().min(1).optional(),
-      /** Google `dateRestrict`. Polling is frequent, so a day is the normal window. */
+      /** Only results published in the last 1/3/7 days. Polling is frequent, so a day is normal. */
       lookback: z.enum(SEARCH_LOOKBACKS).default("d1"),
     }),
   }),

@@ -22,10 +22,10 @@ import { PLATFORMS } from "@/lib/types";
 
 // "Add source" dialog. The form is flat (one field set for all kinds); on submit the
 // kind-specific config is assembled and validated with the contract's sourceConfigSchema,
-// so the API accepts anything that passes here. Google search is the primary kind; the
+// so the API accepts anything that passes here. Web search (Exa / Tavily) is the primary kind; the
 // Reddit API kinds only appear when the API reports them enabled.
 
-const KINDS = ["google_search", "rss", "reddit_subreddit", "reddit_search"] as const;
+const KINDS = ["web_search", "rss", "reddit_subreddit", "reddit_search"] as const;
 const LOOKBACKS = ["d1", "d3", "d7"] as const;
 
 const formSchema = z.object({
@@ -44,7 +44,7 @@ const formSchema = z.object({
 type FormValues = z.infer<typeof formSchema>;
 
 const DEFAULTS: FormValues = {
-  kind: "google_search",
+  kind: "web_search",
   platform: "reddit",
   phrases: [],
   siteScope: "",
@@ -59,7 +59,7 @@ const DEFAULTS: FormValues = {
 
 function toConfig(v: FormValues): z.infer<typeof sourceConfigSchema> | { error: string } {
   const raw =
-    v.kind === "google_search"
+    v.kind === "web_search"
       ? {
           kind: v.kind,
           config: {
@@ -104,9 +104,9 @@ export function AddSourceDialog({
   const [configError, setConfigError] = useState<string | null>(null);
   const form = useForm<FormValues>({ resolver: zodResolver(formSchema), defaultValues: DEFAULTS });
   const kind = form.watch("kind");
-  const searchBudget = useQuery({ ...orpc.integrations.searchBudget.queryOptions(), enabled: open });
-  const kinds = selectableKinds(searchBudget.data?.enabledSourceKinds ?? ["google_search"]);
-  const searchDisabled = searchBudget.data ? !searchBudget.data.configured : false;
+  const webSearch = useQuery({ ...orpc.integrations.webSearch.queryOptions(), enabled: open });
+  const kinds = selectableKinds(webSearch.data?.enabledSourceKinds ?? ["web_search"]);
+  const searchDisabled = webSearch.data ? !webSearch.data.configured : false;
 
   const create = useMutation(
     orpc.sources.create.mutationOptions({
@@ -171,12 +171,12 @@ export function AddSourceDialog({
             </Select>
           </Field>
 
-          {kind === "google_search" ? (
+          {kind === "web_search" ? (
             <>
               {searchDisabled ? (
                 <p className="text-xs text-destructive">
-                  Google Programmable Search is not configured on the API (GOOGLE_CSE_KEY / GOOGLE_CSE_CX).
-                  The source can be saved but will not run until it is.
+                  Web search is not configured on the API (set EXA_API_KEY and/or TAVILY_API_KEY). The source
+                  can be saved but will not run until one is.
                 </p>
               ) : null}
               {platformSelect(
@@ -290,7 +290,11 @@ export function AddSourceDialog({
             label="Poll every (minutes)"
             htmlFor="pollIntervalMin"
             error={form.formState.errors.pollIntervalMin?.message}
-            hint={kind === "google_search" ? "Each poll costs 1–2 of the daily search queries" : undefined}
+            hint={
+              kind === "web_search"
+                ? "Each poll costs 1–2 searches from the monthly Exa/Tavily budget"
+                : undefined
+            }
           >
             <Input
               id="pollIntervalMin"

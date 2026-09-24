@@ -6,9 +6,8 @@ Status as of **2026-09-24**: the Reddit Data API request was **denied**. The API
 re-apply, and do not open duplicate tickets.
 
 Reddit remains a priority platform. It is covered through the `web_search` source
-(Exa / Tavily, see `CLAUDE.md` next steps) plus Google Alerts RSS. Until `web_search`
-ships, the existing `google_search` kind (Google Programmable Search over public post
-pages) does the same job. No scraping of reddit.com in any form.
+(Exa / Tavily search scoped to `reddit.com`) plus Google Alerts RSS. No scraping of
+reddit.com in any form.
 
 ## Timeline
 
@@ -16,10 +15,10 @@ pages) does the same job. No scraping of reddit.com in any form.
 |---|---|
 | Nov 2025 | Reddit puts the Data API behind manual approval under the Responsible Builder Policy. Small commercial tools are rarely approved. |
 | May 2026 | The unauthenticated `.json` and `.rss` endpoints start answering 403 for server-side clients. |
-| 2026-09-09 | First submission of the access request (ticket **18465893**, account u/nikolaymih11). Use case: read-only monitoring of public posts matching a small set of phrases, for an internal lead-finding tool; no posting, no user data kept beyond public post text. |
-| 2026-09-09 → 2026-09-16 | Second submission on the same ticket (details added on Reddit's request). Exact date not recorded here; add it if known. |
-| 2026-09-16 | **Denied**, templated response: "not in compliance with the Responsible Builder Policy and/or lacks necessary details". |
-| 2026-09-24 | Decision: no re-application. Coverage via `web_search` (Exa / Tavily) + Google Alerts RSS. Reddit API adapters remain feature-flagged. |
+| 2026-09-09 | Attempts to submit the request from a phone. None went through: the form reloaded silently, no ticket was created and no confirmation email arrived. |
+| 2026-09-16 | The only real submission, from a laptop: ticket **18465893**, account u/nikolaymih11. Use case: read-only monitoring of public posts matching a small set of phrases, for an internal lead-finding tool; no posting, no user data kept beyond public post text. |
+| 2026-09-16 | **Denied the same day** (email at 10:57 PDT), templated response: "not in compliance with the Responsible Builder Policy and/or lacks necessary details". |
+| 2026-09-24 | Decision: no re-application. Coverage via `web_search` (Exa / Tavily) + Google Alerts RSS. Reddit API adapters remain feature-flagged. The interim `google_search` source is removed: Google's Custom Search JSON API is closed to new customers and shuts down 2027-01-01. |
 
 ## Coverage strategy
 
@@ -40,7 +39,7 @@ pages) does the same job. No scraping of reddit.com in any form.
 They cost nothing while disabled and are kept in case the situation changes on Reddit's
 side. The registry registers them as disabled adapters: config still validates, a run
 fails with a clear non-retryable error naming the missing env, and the add-source form
-does not offer them (`integrations.searchBudget.enabledSourceKinds`). Should credentials
+does not offer them (`integrations.webSearch.enabledSourceKinds`). Should credentials
 ever exist, setting `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` and
 restarting the API is the whole switch. The Reddit fixtures under
 `packages/core/src/test/fixtures/reddit` are hand-authored and would need real recordings

@@ -15,6 +15,7 @@ import { orpc } from "@/lib/orpc";
 export function Integrations() {
   const status = useQuery(orpc.integrations.status.queryOptions());
   const budget = useQuery(orpc.runs.budget.queryOptions());
+  const webSearch = useQuery(orpc.integrations.webSearch.queryOptions());
 
   return (
     <div className="flex flex-col gap-4">
@@ -71,6 +72,56 @@ export function Integrations() {
             </Link>{" "}
             → settings → “Email digest recipients” to choose who gets each digest.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Web search</CardTitle>
+            <CardDescription>
+              Discovery for Reddit, LinkedIn and X. Providers rotate; each has a monthly cap with back-off at
+              90% and a hard stop at 100%. Keys are set in the API environment and never shown here.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          {webSearch.isPending ? (
+            <Skeleton className="h-10 w-full" />
+          ) : webSearch.isError ? (
+            <p className="text-xs text-destructive">{webSearch.error.message}</p>
+          ) : (
+            <>
+              {webSearch.data.providers.map((p) => (
+                <Row
+                  key={p.name}
+                  label={p.name === "exa" ? "Exa" : "Tavily"}
+                  value={
+                    p.state === "not_configured" ? (
+                      <Badge variant="muted">Not configured</Badge>
+                    ) : p.state === "exhausted" ? (
+                      <Badge variant="muted">Stopped for the month</Badge>
+                    ) : p.state === "backoff" ? (
+                      <Badge variant="secondary">Backing off</Badge>
+                    ) : (
+                      <Badge>Active</Badge>
+                    )
+                  }
+                  hint={
+                    p.configured
+                      ? `${Math.round(p.usedThisMonth)}${p.monthlyCap ? ` of ${p.monthlyCap}` : ""} ${p.name === "exa" ? "searches" : "credits"} used this month`
+                      : `Set ${p.name === "exa" ? "EXA_API_KEY" : "TAVILY_API_KEY"} on the API to enable it.`
+                  }
+                />
+              ))}
+              {!webSearch.data.configured ? (
+                <p className="text-xs text-destructive">
+                  No web search provider is configured, so web search sources cannot run. Google Alerts feeds
+                  still work.
+                </p>
+              ) : null}
+            </>
+          )}
         </CardContent>
       </Card>
 

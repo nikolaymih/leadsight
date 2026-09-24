@@ -1,6 +1,3 @@
-export * from "./google/client.js";
-export * from "./google/query.js";
-export * from "./google/search.js";
 export * from "./hydrate/index.js";
 export * from "./reddit/client.js";
 export * from "./reddit/listing.js";
@@ -11,3 +8,4 @@ export * from "./rss.js";
 export * from "./source.js";
 export * from "./text.js";
 export * from "./url.js";
+export * from "./web-search/index.js";

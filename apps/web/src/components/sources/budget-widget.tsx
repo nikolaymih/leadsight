@@ -6,33 +6,46 @@ import { formatTokens } from "@/lib/format";
 import { orpc } from "@/lib/orpc";
 import { cn } from "@/lib/utils";
 
-// Tokens used today vs. the daily cap, per LLM provider. Polls each minute while visible.
-// Extraction stops at 90% of the cap (design.md §4), so the bar turns amber there.
+// LLM tokens used today per provider, and web search units used this month per provider.
+// Polls each minute while visible. Bars turn amber at 90%, where the pipeline starts
+// skipping (LLM) or backing off (web search).
 
 export function BudgetWidget({ className }: { className?: string }) {
   const budget = useQuery({ ...orpc.runs.budget.queryOptions(), refetchInterval: 60_000 });
-  const search = useQuery({ ...orpc.integrations.searchBudget.queryOptions(), refetchInterval: 60_000 });
+  const search = useQuery({ ...orpc.integrations.webSearch.queryOptions(), refetchInterval: 60_000 });
 
   return (
     <div className={cn("flex flex-col gap-2 rounded-lg border border-border bg-card px-3 py-2", className)}>
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Budgets today</h3>
       {search.data ? (
-        <div className="flex flex-col gap-0.5 text-xs">
-          <div className="flex justify-between gap-3">
-            <span className="font-medium">Google search</span>
-            <span className="tabular text-muted-foreground">
-              {search.data.configured
-                ? `${search.data.queriesUsedToday}${search.data.dailyCap ? ` / ${search.data.dailyCap}` : ""} queries`
-                : "not configured"}
-            </span>
+        search.data.configured ? (
+          search.data.providers
+            .filter((p) => p.configured)
+            .map((p) => (
+              <div key={p.name} className="flex flex-col gap-0.5 text-xs">
+                <div className="flex justify-between gap-3">
+                  <span className="font-medium">{p.name === "exa" ? "Exa" : "Tavily"}</span>
+                  <span className="tabular text-muted-foreground">
+                    {Math.round(p.usedThisMonth)}
+                    {p.monthlyCap ? ` / ${p.monthlyCap}` : ""} {p.name === "exa" ? "searches" : "credits"}{" "}
+                    this month
+                    {p.state === "exhausted" ? " · stopped" : p.state === "backoff" ? " · backing off" : ""}
+                  </span>
+                </div>
+                {p.monthlyCap ? (
+                  <Bar
+                    ratio={Math.min(1, p.usedThisMonth / p.monthlyCap)}
+                    label={`${p.name} monthly budget used`}
+                  />
+                ) : null}
+              </div>
+            ))
+        ) : (
+          <div className="flex justify-between gap-3 text-xs">
+            <span className="font-medium">Web search</span>
+            <span className="text-muted-foreground">not configured</span>
           </div>
-          {search.data.configured && search.data.dailyCap ? (
-            <Bar
-              ratio={Math.min(1, search.data.queriesUsedToday / search.data.dailyCap)}
-              label="Google search budget used"
-            />
-          ) : null}
-        </div>
+        )
       ) : null}
       {budget.isPending ? (
         <Skeleton className="h-4 w-40" />

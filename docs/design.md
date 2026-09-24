@@ -131,7 +131,7 @@ A configured source instance attached to a campaign. One campaign can have many.
 | id | uuid pk | |
 | organization_id | uuid fk | |
 | campaign_id | uuid fk | |
-| kind | enum `google_search` `rss` `reddit_subreddit` `reddit_search` | `google_search` is primary; `rss` covers Google Alerts feeds; the `reddit_*` kinds need Reddit API credentials (optional, see `docs/reddit-access.md`) |
+| kind | enum `web_search` `rss` `reddit_subreddit` `reddit_search` | `web_search` (Exa / Tavily) is primary; `rss` covers Google Alerts feeds; the `reddit_*` kinds need Reddit API credentials (optional, see `docs/reddit-access.md`) |
 | config | jsonb | see below |
 | enabled | bool | |
 | cursor | jsonb | per-source coverage state (last seen id / timestamp) |
@@ -142,7 +142,7 @@ A configured source instance attached to a campaign. One campaign can have many.
 
 `config` by kind:
 
-- `google_search`: `{ "platform": "reddit" | "linkedin" | "x" | "facebook" | "web", "phrases": ["looking for a cto", …] (1–10), "siteScope": "reddit.com/r/startups" (optional; defaults per platform: reddit.com, linkedin.com/posts, x.com, facebook.com, none for web), "lookback": "d1" | "d3" | "d7" }`
+- `web_search`: `{ "platform": "reddit" | "linkedin" | "x" | "facebook" | "web", "phrases": ["looking for a cto", …] (1–10), "siteScope": "reddit.com/r/startups" (optional domain + path; defaults per platform: reddit.com, linkedin.com/posts, x.com, facebook.com, none for web), "lookback": "d1" | "d3" | "d7" }`
 - `rss`: `{ "url": "https://www.google.com/alerts/feeds/...", "platform": "linkedin" | "x" | "facebook" | "web" }`
 - `reddit_subreddit`: `{ "subreddit": "startups", "listing": "new" }`
 - `reddit_search`: `{ "query": "looking for a technical cofounder", "subreddit": null, "sort": "new" }`
@@ -313,27 +313,45 @@ Rules:
   config still validates, `run` fails with a clear non-retryable error, so
   the source shows why in `last_error` instead of vanishing.
 
-**Source strategy (2026-09-09; Reddit request denied 2026-09-16).** The Reddit
-Data API requires manual approval (Responsible Builder Policy); our request was
-denied and will not be re-filed, and the unauthenticated `.json`/RSS endpoints
-return 403; see `docs/reddit-access.md`. A `web_search` kind backed by Exa /
-Tavily is the planned primary search source; `google_search` covers until then.
-Discovery on Reddit, LinkedIn and X therefore goes through Google search over
-each platform's public pages, polled actively; Google Alerts RSS stays as the
-free secondary net. reddit.com is never scraped for discovery.
+**Source strategy (2026-09-24).** The Reddit Data API requires manual approval
+(Responsible Builder Policy); our request was denied on 2026-09-16 and will not
+be re-filed, and the unauthenticated `.json`/RSS endpoints return 403; see
+`docs/reddit-access.md`. Google's Custom Search JSON API is closed to new
+customers and shuts down 2027-01-01, so the interim `google_search` kind was
+removed (migration `0003` converts its rows to `web_search`, same config).
+Discovery on Reddit, LinkedIn and X goes through `web_search` over each
+platform's public pages, polled actively; Google Alerts RSS stays as the free
+secondary net. reddit.com is never scraped for discovery.
 
 Implementations in v1:
 
-- `GoogleSearchSource` (`google_search`, **primary**) — Google Programmable
-  Search JSON API (`GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX`). One query per source
-  per poll: `site:<scope> ("p1" OR "p2" …)`, max 10 phrases, `dateRestrict`
-  = lookback (`d1`), `sort=date`, 10 results; page 2 only when page 1 was
-  full. Results are filtered to post pages per platform (`/comments/`,
-  `/posts/`, `/status/`…), become snippet posts (`external_id` = canonical
-  URL) and are hydrated later. Cursor `{ lastQueryAt, query }` is
-  informational; dedupe at insert makes repeats harmless. Each run reports
-  `usage.searchQueries` (1–2), which the pipeline books against the daily
-  query budget (§4).
+- `WebSearchSource` (`web_search`, **primary**) — `sources/web-search/`.
+  Phrases (max 10, de-quoted, deduped) are OR-ed (`"p1" OR "p2" …`) and
+  packed into as few queries as fit 400 characters (Tavily's limit), at most
+  2 per run. Each query goes to the **rotator** with the platform domain as a
+  domain filter, a start date from `lookback` and 20 results. Providers filter
+  by domain only, so a path scope (`reddit.com/r/startups`) is enforced on the
+  results, along with the per-platform post-page filter (`/comments/`,
+  `/posts/`, `/status/`…). Hits become snippet posts (`external_id` =
+  canonical URL, deduped) and are hydrated later. Cursor `{ lastQueryAt,
+  queries }` is informational; dedupe at insert makes repeats harmless. Each
+  run reports `usage.webSearch` (`[{ provider, units }]`), which the pipeline
+  books against the monthly budgets (§4). A failing first query throws (the
+  source's `last_error` shows every provider's reason); a failing second one
+  is a warning.
+  - `SearchProvider { name, search(request) → { hits, units } }`: thin
+    wrappers over `exa-js` (`type: "auto"`, highlights as snippet, 1 unit per
+    request) and `@tavily/core` (basic depth, 1 credit, `usage.credits` when
+    reported). Failures become `SearchProviderError` with a kind: `quota`,
+    `rate_limit`, `auth`, `transient`, `invalid` (Tavily's SDK drops the HTTP
+    status, so its messages are classified).
+  - **Rotator**: providers under 90% of their monthly cap first, rotated
+    round-robin so both free tiers are spent evenly; providers at 90–100%
+    only when none is under 90%; providers at 100% never (hard stop until
+    the next UTC month). A failed call falls through to the next provider;
+    in-memory cooldowns: quota → next UTC month, rate limit → 15 min, auth →
+    60 min. When no provider can be asked the run returns no posts with a
+    warning.
 - `RssSource` — parses any RSS/Atom feed (Google Alerts), cursor
   `{ newestPublished }`; `platform` taken from config; `external_id` is the
   canonical target URL.
@@ -440,10 +458,11 @@ retries/visibility become painful).
    `post_sources`, persist cursor. Due = `poll_interval_min` elapsed, or
    `active_hours.offInterval` elapsed when the source is outside its active
    hours (evaluated in the source's time zone; `pipeline/schedule.ts`).
-   `google_search` sources additionally back off to 2 h while the search
-   query budget is ≥ 90% spent (resets at midnight UTC).
+   `web_search` sources additionally back off to 2 h while every configured
+   search provider is at ≥ 90% of its monthly cap (resets on the 1st, UTC).
 2. **Pre-filter** — cheap local check: post must contain at least one campaign
-   keyword or the source must be `reddit_search`/`rss` (already keyword-scoped).
+   keyword or the source must be `web_search`/`reddit_search`/`rss` (already
+   keyword-scoped).
    Everything else is kept as a post but not extracted. Implemented inside the
    candidate query, so filtered posts never occupy the batch window.
 3. **Hydrate** — posts with `body_is_snippet = true` and a hydrator available.
@@ -457,18 +476,20 @@ retries/visibility become painful).
    `source.run`, `source.error`, `extract.dropped`, `extract.error` and
    `extract.budget_exhausted` events as they happen.
 
-Budget guards (per UTC day, per API key, so usage is summed across
-organizations; both live in `extractor/budget.ts` and are stored as events):
+Budget guards (per API key, so usage is summed across organizations; both
+live in `extractor/budget.ts` and are stored as events):
 
-- LLM tokens per provider (`llm.usage` events). A provider at ≥ 90% of its
-  cap is skipped for the day and the next provider is used — logged, never
+- LLM tokens per provider per UTC day (`llm.usage` events). A provider at
+  ≥ 90% of its cap is skipped for the day and the next provider is used — logged, never
   silent. When every provider is over its cap, extraction stops for the run
   and the posts remain candidates for the next day.
-- Google search queries (`search.usage` events, `GOOGLE_CSE_DAILY_QUERIES`,
-  default 100 = the free tier). At ≥ 90% the search source skips its run
-  with a warning and the scheduler stretches `google_search` intervals to
-  2 h until midnight UTC; a request that got an HTTP answer counts even when
-  it failed.
+- Web search units per provider per UTC calendar month (`search.usage`
+  events with `{ provider, units }`; Exa counts requests, Tavily credits;
+  caps `EXA_MONTHLY_SEARCHES`, `TAVILY_MONTHLY_CREDITS`, default 1000 each).
+  At ≥ 90% a provider is only used when no other is under 90%, and once every
+  provider is there the scheduler stretches `web_search` intervals to 2 h. At
+  100% the provider is never called again until the month rolls over. Only
+  successful calls are counted; neither provider bills failed requests.
 
 ## 5. Campaign setup chat
 

@@ -20,7 +20,9 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@tavily/core": "^0.7.13",
     "drizzle-orm": "^0.45.2",
+    "exa-js": "^2.22.2",
     "openai": "^7.10.0",
     "postgres": "^3.4.0",
     "rss-parser": "^3.13.0",

@@ -6,8 +6,8 @@ import { listRecentLabels } from "../db/labels.js";
 import { type LeadWithPost, upsertLead } from "../db/leads.js";
 import { findExtractionCandidates, updatePostContent, upsertPosts } from "../db/posts.js";
 import { describeSource, findDueSourcesAllOrgs, listSourcesByIds, recordSourceRun } from "../db/sources.js";
-import { BudgetExhaustedError, ProviderError } from "../errors.js";
-import { SEARCH_BACKOFF_MIN, type SearchBudget } from "../extractor/budget.js";
+import { BudgetExhaustedError } from "../errors.js";
+import { WEB_SEARCH_BACKOFF_MIN, type WebSearchBudget } from "../extractor/budget.js";
 import { EXTRACT_BATCH_SIZE, type Extractor } from "../extractor/extractor.js";
 import { selectFewShot } from "../extractor/fewshot.js";
 import type { Notifier } from "../notify/notifier.js";
@@ -34,8 +34,8 @@ export interface PipelineDeps {
   extractorFor(organizationId: string): Extractor;
   notifiers: readonly Notifier[];
   logger: PipelineLogger;
-  /** Google search query budget; google_search sources back off when it is nearly spent. */
-  searchBudget?: SearchBudget;
+  /** Monthly web search budgets; web_search sources back off when every provider is ≥ 90%. */
+  webSearchBudget?: WebSearchBudget;
   now?: () => Date;
   /** Manual "run now": poll exactly these sources instead of the due ones. */
   sourceIds?: readonly string[];
@@ -121,18 +121,19 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineRunResult
   let budgetExhausted = false;
 
   // 1. Poll. The SQL pre-selects on the shorter interval; the exact rule (active hours in the
-  // source's time zone, search back-off while the query budget is nearly spent) runs here.
+  // source's time zone, web search back-off while every provider is ≥ 90% of its monthly cap)
+  // runs here.
   let sources: Source[];
   if (deps.sourceIds) {
     sources = await listSourcesByIds(deps.db, deps.sourceIds);
   } else {
-    const searchOk = deps.searchBudget ? await deps.searchBudget.canQuery() : true;
-    if (!searchOk) deps.logger.warn({}, "search query budget nearly spent: google_search sources back off");
+    const backOff = deps.webSearchBudget ? await deps.webSearchBudget.shouldBackOff() : false;
+    if (backOff) deps.logger.warn({}, "web search budgets ≥ 90%: web_search sources back off");
     sources = (await findDueSourcesAllOrgs(deps.db, startedAt)).filter((s) =>
       isSourceDue(
         s,
         startedAt,
-        s.kind === "google_search" && !searchOk ? { minIntervalMin: SEARCH_BACKOFF_MIN } : {},
+        s.kind === "web_search" && backOff ? { minIntervalMin: WEB_SEARCH_BACKOFF_MIN } : {},
       ),
     );
   }
@@ -191,8 +192,10 @@ async function pollSource(
     const adapter = deps.registry.get(source.kind);
     const config = adapter.validateConfig(source.config);
     const result = await adapter.run(config, source.cursor);
-    if (result.usage?.searchQueries && deps.searchBudget) {
-      await deps.searchBudget.record(source.organizationId, result.usage.searchQueries);
+    if (deps.webSearchBudget) {
+      for (const u of result.usage?.webSearch ?? []) {
+        await deps.webSearchBudget.record(source.organizationId, u.provider, u.units);
+      }
     }
     const upserted = await upsertPosts(deps.db, source.organizationId, source.id, result.posts);
 
@@ -221,15 +224,6 @@ async function pollSource(
     const message = errorMessage(err);
     summary.error = message;
     acc.errors.push(`${summary.name}: ${message}`);
-    // A search request that got an HTTP answer counted against the quota even though it failed.
-    if (
-      source.kind === "google_search" &&
-      deps.searchBudget &&
-      err instanceof ProviderError &&
-      err.status !== undefined
-    ) {
-      await deps.searchBudget.record(source.organizationId, 1);
-    }
     // lastRunAt moves even on failure so a broken source waits its interval instead of hammering.
     await recordSourceRun(deps.db, source.id, { ranAt: now(), error: message });
     await appendEvent(deps.db, {
