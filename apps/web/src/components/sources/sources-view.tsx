@@ -78,7 +78,7 @@ export function SourcesView() {
         ) : sources.data.length === 0 ? (
           <EmptyState
             title="No sources for this campaign"
-            description="Add a subreddit, a Reddit search or a Google Alerts feed."
+            description="A campaign only searches through its sources; with none, runs poll nothing. Add a web search source for Reddit, LinkedIn or X, or paste a Google Alerts feed."
             action={
               <Button disabled={!manage} onClick={() => setAdding(true)}>
                 <Plus />
@@ -99,7 +99,14 @@ export function SourcesView() {
         <BudgetWidget className="self-start" />
       </div>
 
-      {campaign ? <AddSourceDialog campaignId={campaign.id} open={adding} onOpenChange={setAdding} /> : null}
+      {campaign ? (
+        <AddSourceDialog
+          campaignId={campaign.id}
+          keywords={campaign.keywords}
+          open={adding}
+          onOpenChange={setAdding}
+        />
+      ) : null}
     </div>
   );
 }

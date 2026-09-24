@@ -1,10 +1,12 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 // Chips + a text field. Enter or comma adds, Backspace on an empty field removes the last.
+// Text still in the field when the enclosing form submits counts as a tag: a native
+// capture-phase submit listener commits it before react-hook-form's handler reads the values.
 
 export function TagInput({
   value,
@@ -22,6 +24,7 @@ export function TagInput({
   className?: string;
 }) {
   const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   function commit() {
     const parts = draft
@@ -31,6 +34,16 @@ export function TagInput({
     if (parts.length > 0) onChange([...value, ...parts]);
     setDraft("");
   }
+
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  useEffect(() => {
+    const form = inputRef.current?.form;
+    if (!form) return;
+    const onSubmit = () => commitRef.current();
+    form.addEventListener("submit", onSubmit, { capture: true });
+    return () => form.removeEventListener("submit", onSubmit, { capture: true });
+  }, []);
 
   return (
     <div
@@ -59,6 +72,7 @@ export function TagInput({
         </span>
       ))}
       <input
+        ref={inputRef}
         id={id}
         value={draft}
         disabled={disabled}
