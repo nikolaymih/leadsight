@@ -1,0 +1,92 @@
+# Single-host deployment: Postgres, a one-shot migration step, the API, the web app and Caddy
+# as the TLS-terminating reverse proxy. Everything is served from ONE public origin
+# (https://$DOMAIN): Caddy routes /api/*, /rpc/* and /healthz to the API and the rest to the
+# web app, so cookies are same-site and no cross-origin setup is needed.
+#
+#   cp deploy/.env.example deploy/.env      # then edit
+#   docker compose --env-file deploy/.env -f deploy/compose.yml up -d --build
+#
+# Migrations run in the `migrate` service before the API starts; a failed migration stops the
+# rollout with the previous API still serving (compose only replaces it on success).
+
+name: leadsight
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: leadsight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: leadsight
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadsight -d leadsight"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    image: leadsight-api
+    command: ["node", "dist/migrate.js"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://leadsight:${POSTGRES_PASSWORD}@db:5432/leadsight
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    image: leadsight-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3001"
+      DATABASE_URL: postgres://leadsight:${POSTGRES_PASSWORD}@db:5432/leadsight
+      WEB_ORIGIN: https://${DOMAIN:?set DOMAIN in deploy/.env}
+      BETTER_AUTH_URL: https://${DOMAIN}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose: ["3001"]
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+    image: leadsight-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    expose: ["3000"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
+  caddy_config: {}

@@ -1,0 +1,279 @@
+---
+name: pipeline
+description: How the LeadSight ingestion and scoring pipeline works in packages/core — Source adapters (web search via Exa and Tavily as the primary source, RSS/Google Alerts, the feature-flagged Reddit API, per-platform hydrators for Reddit, LinkedIn and X), the LLM Extractor with Groq→Gemini fallback, the LLM token budget and monthly web search budgets with back-off and hard stop, active-hours scheduling, the rules engine, labels/few-shot, notifiers, and the scheduler loop. Load this for any task about polling, scraping, feeds, web search, Exa, Tavily, Reddit, RSS, Google Alerts, LinkedIn/X post fetching, LLM calls, prompts, extraction, scoring, evidence, verdicts, confidence, rescoring, email digests, or the words "source", "adapter", "extractor", "provider", "budget", "batch", "cursor", "dedupe", "active hours".
+---
+
+# Pipeline (packages/core)
+
+Read `docs/design.md` §3–§6 first; this skill is the implementation guide for it.
+
+```
+packages/core/src/
+  sources/    source.ts (Source, SourceDeps, SourceRunResult), registry.ts (createSourceRegistry: kinds,
+              enabledKinds, hydrate), config.ts (validateSourceConfig), text.ts + url.ts (pure helpers, tested),
+              web-search/{query,provider,exa,tavily,rotator,source}.ts (primary), rss.ts,
+              reddit/{client,listing,subreddit,search}.ts (feature-flagged off), hydrate/{index,reddit,linkedin,x}.ts
+  extractor/  extractor.ts (Extractor, ExtractionInput/Result, EXTRACT_BATCH_SIZE), llm-extractor.ts
+              (createLlmExtractor, parseResponse), prompt.ts (PROMPT_VERSION, SYSTEM_PROMPT, buildUserPrompt),
+              fewshot.ts (selectFewShot, formatExample), budget.ts (LLM token budget + monthly web search budget),
+              providers/{provider,openai-compatible,groq,gemini}.ts
+  rules/      index.ts (pure), tested
+  notify/     notifier.ts (contract), mailer.ts (transport contract), email.ts (digest)
+  pipeline/   run.ts (orchestrates steps), prefilter.ts, schedule.ts (active hours, isSourceDue), dedupe.ts
+  db/         queries (see postgres-drizzle skill). The pipeline uses: findDueSourcesAllOrgs,
+              recordSourceRun, upsertPosts, findUnscoredPosts, listRecentLabels, upsertLead, appendEvent
+```
+
+## Sources
+
+Source strategy (2026-09-24): **`web_search` (Exa + Tavily) is the primary source** for
+Reddit, LinkedIn and X; `rss` (Google Alerts) is the free secondary net; the Reddit API kinds
+are feature-flagged off (our request was denied, `docs/reddit-access.md`). Google Custom
+Search is not an option (closed to new customers, shut down 2027-01-01) — don't reintroduce
+it. Never scrape reddit.com for discovery; the only reddit.com GETs are single public post
+pages during hydration.
+
+- Implement the `Source<C>` interface from `docs/design.md`. `validateConfig` uses
+  `sourceConfigSchema` from core's `types.ts` — one definition, re-exported by the contract
+  for the web app. Core never imports the contract (the contract depends on core).
+  `RawPost` also lives in `types.ts`.
+- Adapters get their outside world through `SourceDeps` (`fetch`, `userAgent`, `now`, `sleep`,
+  Reddit credentials) at construction — `createSourceRegistry({ userAgent, webSearchProviders?,
+  webSearchBudget?, reddit?, fetch? })` builds them all. A kind without credentials is registered as a
+  *disabled* adapter (config validates, `run` throws a non-retryable `ProviderError` naming the
+  missing env; `registry.enabledKinds()` / `isEnabled(kind)` tell the API and the UI). `run(config,
+  cursor)` therefore keeps the shape in design.md and tests inject a fake fetch. Never reach for
+  the global `fetch` inside an adapter.
+- `run(config, cursor)` is read-only and idempotent. Return `nextCursor` even on partial
+  failure so progress is never lost. A whole-request failure (auth, 5xx after retry, bad
+  feed) throws `ProviderError`; the pipeline records it in `sources.last_error`.
+- Never throw for a single bad item; push a warning and continue. Every external payload
+  is Zod-parsed item by item (`redditPostSchema`, oEmbed).
+- All HTTP via `deps.fetch` with `AbortSignal.timeout(REQUEST_TIMEOUT_MS)` and the
+  User-Agent from deps.
+- **Web search** (`web-search/`), layered so each piece is testable alone:
+  - `query.ts` (pure): `normalizePhrases` (trim, de-quote, dedupe, max 10), `buildOrQuery`
+    (`"p1" OR "p2"`), `packPhrases` (greedy into queries ≤ `MAX_QUERY_CHARS` = 400, Tavily's
+    limit; an over-long phrase is truncated at a word boundary), `parseSiteScope` →
+    `{ host, pathPrefix }` (default per platform, none for `web`), `inScope` (host incl.
+    subdomains + path prefix — providers only filter by domain), `isPostUrl`, `hitToRawPost`
+    (snippet post, `externalId = canonicalUrl(url)`), `dedupePosts`, `lookbackStart`.
+  - `provider.ts`: `SearchProvider { name, search(req) → { hits, units } }`,
+    `SearchProviderError` with a `failure` kind (`quota | rate_limit | auth | transient |
+    invalid`), `failureForStatus` (401/403 auth, 402/432/433 quota, 429 rate limit, 5xx
+    transient). Providers never retry and never touch budgets.
+  - `exa.ts` / `tavily.ts`: thin SDK wrappers. The SDK client is injectable (`client?:
+    { search(query, options) }`), which is how tests run with fakes — no network. Exa:
+    `type: "auto"`, `includeDomains`, `startPublishedDate`, `numResults`, highlights as the
+    snippet; 1 unit per request; errors carry `statusCode`. Tavily: `searchDepth: "basic"`,
+    `includeDomains`, `startDate` (YYYY-MM-DD), `maxResults`, `includeUsage`; units =
+    `usage.credits ?? 1`; its SDK throws plain Errors (`"<status> Error: …"` or the API text
+    without a status), so `classifyTavilyError` reads the message.
+  - `rotator.ts`: `createSearchRotator({ providers, budget?, now? })`. Candidates = providers
+    not at 100% and not cooling down; under-90% before 90–100%, round-robin within a tier.
+    Falls through on failure; cooldowns in memory (quota → next UTC month, rate limit 15 min,
+    auth 60 min). Returns `{ hits, provider, usage }`, `{ skipped, reason }` when nobody can be
+    asked, or throws `WebSearchUnavailableError` listing every provider's failure. Only
+    successful calls produce usage.
+  - `source.ts`: `createWebSearchSource(deps, { rotator })` — up to `MAX_QUERIES_PER_RUN` (2)
+    packed queries, `RESULTS_PER_QUERY` (20), filters scope + post pages, dedupes, returns
+    `usage.webSearch`. First query failing throws; a later one is a warning. The **pipeline**
+    books usage (adapters never touch the DB).
+  - Registry: with no provider, `web_search` is a disabled adapter whose run throws
+    `DISABLED_REASONS.webSearch` ("not configured (EXA_API_KEY and TAVILY_API_KEY unset)");
+    `registry.webSearchProviders()` lists the configured ones in fallback order.
+- **Reddit** (optional): OAuth client-credentials flow (`client_credentials` grant, cached token with
+  expiry). Respect `X-Ratelimit-Remaining` / `X-Ratelimit-Reset` headers; if remaining < 5,
+  sleep until reset. Endpoints: `/r/{sub}/new.json?limit=100&before=<fullname>` and
+  `/search.json?q=...&sort=new&restrict_sr=1`. `reddit/client.ts` owns the token cache
+  (refreshes 60s early, re-auths once on 401), one retry on 429/5xx honouring
+  `Retry-After`, and the rate-limit sleep. Cursors: subreddit `{ newest: fullname }` walked
+  with `before` (max 5 pages; if the cursor post vanished and `before` returns nothing,
+  refetch the latest page and let dedupe absorb repeats); search `{ newestCreatedUtc }`
+  filtered client-side (max 3 pages). Strip Reddit markdown lightly (links kept as text).
+  Post body = `selftext`, or the title for link posts; skip `[removed]`/`[deleted]`.
+- **RSS**: `rss-parser` over the Google Alerts feed. Items have title, link (wrapped in a
+  Google redirect — unwrap `url=` param), `published`, and a content snippet. Set
+  `bodyIsSnippet: true`, `platform` from config, `externalId` = `canonicalUrl(target)`
+  (lowercase host, no hash, tracking params and `utm_*` dropped, no trailing slash — see
+  `url.ts`). The `url` column keeps the original target. Cursor `{ newestPublished: ISO }`.
+  Parse with `parser.parseString(text)` on a body fetched through `deps.fetch`, never
+  `parseURL` (it would bypass the injected fetch).
+- **Hydrators** (`hydrate/`): per **platform**, shared by every source kind, reached through
+  `registry.hydrate(post)` (`hydratePost` in `hydrate/index.ts`; a full post is returned as is).
+  - Reddit: GET the post page with a crawler-like UA (public HTML, never the API, never
+    listings); read `<shreddit-post author created-timestamp post-title>` and the
+    `slot="text-body"` / `.md` block, `og:description` as fallback. 403/429 keeps the snippet.
+  - LinkedIn: GET the post URL with a crawler-like UA; parse the `<meta property="og:description">`
+    and the main text blocks. On auth wall (HTTP 999 or redirect to `/authwall`), keep the snippet.
+  - X: `https://publish.twitter.com/oembed?url=<post>&omit_script=true` → strip HTML from
+    `html`. Free, official, no auth.
+  - Facebook / web: no hydrator; snippet only.
+  Hydration is best-effort and never blocks scoring.
+- Register sources in `registry.ts` by `kind`. The pipeline resolves adapters through the
+  registry; nothing else imports adapters directly.
+
+## Dedupe and pre-filter
+
+- Insert posts with `onConflictDoNothing` on `(organization_id, platform, external_id)`.
+  Then link `post_sources`. A post seen by three sources is one row.
+- Pre-filter (`pipeline/prefilter.ts`): a post is a scoring candidate for a campaign if
+  the source is keyword-scoped (`web_search`, `reddit_search`, `rss`) or title+body contains any campaign
+  keyword (case-insensitive substring; `escapeLike` keeps `%`/`_` literal). It runs **inside
+  the candidate query** (`findExtractionCandidates` → `candidateCondition`) so filtered
+  posts never occupy the oldest-first batch window; `isCandidate` is the same rule in TS,
+  kept for tests. Change both together.
+
+## Extractor
+
+- `LlmExtractor` takes an ordered provider list. Each provider is an OpenAI-compatible
+  chat endpoint: Groq `https://api.groq.com/openai/v1`, Gemini
+  `https://generativelanguage.googleapis.com/v1beta/openai`. Model ids live in env
+  (`GROQ_MODEL`, `GEMINI_MODEL`), never in code.
+- Providers implement `ChatProvider { name, model, complete(request) }` and are thin:
+  `createOpenAiCompatibleProvider` wraps the `openai` SDK with `maxRetries: 0` (the
+  extractor owns retry/fallback) and maps failures to `ProviderError` with `status`,
+  `retryable` (429/5xx/network) and `retryAfterMs`. `createGroqProvider` /
+  `createGeminiProvider` only set the base URL. Pass `fetch` to test against `fakeFetch`.
+- One request scores a **batch** (`EXTRACT_BATCH_SIZE = 8`; the pipeline slices). The model
+  is asked for a JSON **object** `{"results": [{id, evidence}]}` — JSON mode needs an object
+  root — with `response_format: { type: "json_object" }`; `parseResponse` strips stray
+  code fences, validates each item with `evidenceSchema`, drops criteria keys we didn't ask
+  about, and ignores unknown ids.
+- Per-post validation: malformed or missing items are re-asked once, alone, then returned
+  in `ExtractionResult.dropped` with a reason. The extractor is DB-free apart from budget
+  accounting, so the **pipeline** writes the `extract.dropped` event. Never let one bad
+  item fail the batch.
+- Retry policy: on a retryable `ProviderError`, retry once after `retryAfterMs` (default
+  2s) on the same provider, then fall through to the next provider; when all fail, the
+  last error propagates. A non-retryable error (400/401/403 — our bug) throws immediately.
+- **Budget** (`budget.ts`): `createBudget({ store, caps })` over a `BudgetStore`;
+  `createDbBudgetStore(db)` writes `llm.usage` events (`entityId` = provider, payload has
+  `totalTokens`) and sums them with `sumLlmUsageSince` from the start of the UTC day,
+  across organizations (caps are per API key). `canSpend` is false at ≥ 90% of the cap;
+  uncapped providers always pass. When every provider is over budget the extractor throws
+  `BudgetExhaustedError` — the pipeline must catch it and leave posts unscored, not drop them.
+  `budget.status(provider)` feeds `runs.budget`.
+- **Web search budget** (same file): `createWebSearchBudget({ store, caps })` where `caps` has
+  one entry per *configured* provider (monthly cap or null). Units per UTC calendar month from
+  `search.usage` events (`entityId` = provider, payload `{ provider, units }`;
+  `createDbWebSearchBudgetStore(db)`, summed across organizations). `state(provider)`:
+  `ok` < 90% ≤ `backoff` < 100% ≤ `exhausted` (`budgetState(used, cap)` is the pure form).
+  The rotator skips `exhausted` (hard stop) and prefers `ok`. `shouldBackOff()` is true when
+  every configured provider is past `ok`; then the pipeline only polls `web_search` sources
+  whose last run is ≥ `WEB_SEARCH_BACKOFF_MIN` (120) minutes old. The pipeline records each
+  run's `usage.webSearch`. Caps come from `EXA_MONTHLY_SEARCHES` / `TAVILY_MONTHLY_CREDITS`
+  (default 1000); `integrations.webSearch` reports per-provider state.
+- Few-shot: `selectFewShot(labels, limit)` alternates positive/negative from newest;
+  `formatExample` truncates to 600 chars and appends the reviewer note. The pipeline loads
+  labels with `listRecentLabels` and passes the selection in `ExtractionInput.examples`.
+- The model never sees weights or thresholds. It receives criteria as `{key, question, type, options}`.
+- Prompt template lives in `prompt.ts` with `PROMPT_VERSION = "2026-09-08.1"`. Bump it on
+  any wording change; it's stored on every lead.
+
+## Shared provider chain
+
+`extractor/chain.ts` — `completeWithFallback(request, { providers, budget, organizationId,
+sleep?, log?, scope? })` is the one implementation of "skip over-budget providers, try in
+order, retry once on a retryable error, fail fast on ours, record usage". The extractor
+(`scope: "extract"`) and the campaign drafter (`scope: "draft"`) both use it; a new LLM
+caller must too. `providerId(p)` → `name/model`; `stripFences` for fenced JSON.
+
+## Campaign draft (`draft/`)
+
+`createCampaignDrafter({ providers, budget, organizationId, fetch, userAgent })` →
+`draft({ messages, urls })`. It fetches pasted pages (`fetch-pages.ts`: og:description +
+body text with nav/footer/script stripped, 6k chars, failures become warnings), builds
+`buildDraftPrompt` (`DRAFT_PROMPT_VERSION`), and asks for `{ reply, draft | null }` — null
+means the model needs one more answer from the user. `normalizeDraft` forgives the usual
+slips before `campaignDraftSchema` (core `types.ts`) runs: snake_case top-level keys,
+camelCase criterion keys, weights that don't sum to 100 (rescaled, remainder on the
+heaviest), enum options without points (0) or over the weight (capped). An invalid draft is
+re-asked once with the issues; a second failure throws a non-retryable `ProviderError`
+(→ `BAD_GATEWAY`). Tested in `draft/campaign-draft.test.ts` with `test/fake-provider.ts`.
+
+## Few-shot
+
+- `fewshot.ts`: load up to `campaign.fewshotLimit` most recent labels for the campaign,
+  balanced positive/negative where possible, join to the post text, truncate each to ~600
+  chars. Format as examples before the posts to score. Tested with fixtures.
+
+## Rules
+
+- `applyRules` is pure and already tested. Pipeline step "score" calls it and writes
+  `score`, `scoreBreakdown`, `confidence`, `verdict`, `rulesVersion`.
+- Rescore = rules only over stored evidence, in batches of 500, in a transaction per batch.
+
+## Notifiers
+
+- `createEmailDigestNotifier({ db, mailer, webOrigin?, minInterval?, now? })` in
+  `notify/email.ts` is the only notifier (a chat notifier such as Slack is deferred; it would
+  be another `Notifier` plus an optional key in `notificationSettingsSchema`).
+- The digest is per campaign, at most once per `minInterval` (24 h), to
+  `campaign.notifications.digestRecipients`. `notify()` is a trigger, not the payload: when
+  due it queries `listAlertableLeadsSince(since = last digest ?? now − interval)` so leads
+  that arrived while waiting are included, ranked like the inbox, capped at
+  `DIGEST_MAX_LEADS`. Sends write a `notify.email_digest` event (`lastEventAt` enforces the
+  interval across restarts); a failed send writes no event and the next run retries.
+- `Mailer` (`notify/mailer.ts`, `{ kind, send({ to, subject, text }) }`) is the transport
+  contract; core never sends mail itself. The API supplies SMTP or log-only.
+- Never notify `insufficient` or `disqualified` (the pipeline filters before calling, and the
+  digest query filters again).
+- Tests: `notify/email.test.ts` with a fake mailer against the real DB.
+
+## Pipeline run
+
+`pipeline/run.ts` exports `runPipeline(deps: PipelineDeps)` with
+`{ db, registry, extractorFor(orgId), notifiers, logger, now?, sourceIds?, maxCandidatesPerCampaign? }`.
+`extractorFor` exists because budget usage events are recorded per organization.
+`sourceIds` makes it a manual run (poll exactly those, due or not).
+
+1. poll due sources (`findDueSourcesAllOrgs` pre-selects in SQL on the shorter of
+   `pollIntervalMin` and `activeHours.offInterval`; `isSourceDue` in `pipeline/schedule.ts`
+   then applies the exact rule — normal interval inside `[from, to)` local hours of
+   `activeHours.tz`, `offInterval` outside, plus the search back-off floor — or
+   `listSourcesByIds` for a manual run) → `upsertPosts`, `recordSourceRun` (lastRunAt moves
+   even on failure so a broken source waits its interval), book `usage.searchQueries`,
+   `source.run` / `source.error` event per source.
+2. for every active campaign (`listActiveCampaignsAllOrgs`): `findExtractionCandidates`
+   (pre-filter included, oldest first, capped at 40) → hydrate snippet posts through
+   `registry.hydrate` and `updatePostContent` → extract in `EXTRACT_BATCH_SIZE` batches with
+   few-shot from `listRecentLabels` → `applyRules` + `upsertLead` → notify each notifier
+   with new leads at or above `minScoreAlert` (never insufficient/disqualified).
+3. one `pipeline.run` event **per organization touched**, payload = `OrgRunReport`
+   (`id, startedAt, durationMs, counts, errors, perSource`) — the shape `runs.list` returns.
+
+Error isolation: a failing source, a failing extraction batch, a dropped post
+(`extract.dropped`, written here, not by the extractor) and a failing notifier are all
+recorded in the report's `errors`/events and the run continues. `BudgetExhaustedError`
+stops extraction for the rest of the run (`extract.budget_exhausted`); the posts stay
+candidates. Constants for event types live in `PIPELINE_EVENTS`.
+
+Idempotent: running twice in a row does no duplicate work (cursors, dedupe,
+candidates-without-a-lead). A post the model dropped is retried on the next run.
+
+Tested end-to-end in `pipeline/run.test.ts` against the real DB with fake adapters,
+extractor and notifiers — extend that test when you add a step.
+
+## Testing
+
+- Adapters: `src/test/fake-fetch.ts` — `fakeFetch(routes)` returns a `fetch` plus every
+  recorded call (`callsTo(match)`); `jsonResponse`/`textResponse` build responses, a
+  `respond: Response[]` sequence drives retry scenarios, `loadFixture(path)` reads
+  `src/test/fixtures/<source>/…`. No msw (not approved), no live network.
+  The current fixtures are hand-authored from the documented payload shapes — the
+  scaffolding sandbox had no egress — so replace them with real recordings once credentials
+  exist (Reddit only if the API is ever approved) and keep them small. Web search providers
+  are tested one level up, against fake SDK clients, so there are no HTTP fixtures for them.
+- Pure helpers have their own tests: `web-search/query.test.ts` (phrases, OR-query packing,
+  scope, URL filter, hit mapping, dedupe), `web-search/providers.test.ts` (Exa/Tavily request
+  options, result mapping, error classification, via fake SDK clients),
+  `web-search/rotator.test.ts` (rotation, 90% preference, 100% hard stop, fall-through,
+  cooldowns), `web-search/source.test.ts` (scoping, skip at cap, query splitting, registry
+  flags), `extractor/budget.test.ts` (token and monthly web search budgets, back-off),
+  `pipeline/schedule.test.ts` (active hours, due rule), `hydrate/reddit.test.ts`.
+- Extractor: inject a fake provider returning canned JSON; test batching, validation,
+  fallback, and budget behavior. Never call a real LLM in tests.
+- Pipeline: integration test against the test DB with fake adapters end-to-end.
+- Manual run: `pnpm --filter @leadsight/core exec tsx scripts/run-source.ts <sourceId>`
+  for debugging a source against the live network.
