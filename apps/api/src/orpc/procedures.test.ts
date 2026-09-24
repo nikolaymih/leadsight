@@ -187,7 +187,16 @@ describe("sources", () => {
 
     const { items: runs, nextCursor } = await owner.runs.list({});
     expect(nextCursor).toBeNull();
-    expect(runs[0]?.perSource).toEqual([{ sourceId: source.id, name: "r/startups", posts: 1, error: null }]);
+    expect(runs[0]?.perSource).toEqual([
+      {
+        sourceId: source.id,
+        name: "r/startups",
+        posts: 1,
+        fetched: 1,
+        warnings: ["one warning"],
+        error: null,
+      },
+    ]);
     expect(runs[0]?.counts.polled).toBe(1);
 
     await expect(member.sources.remove({ id: source.id })).rejects.toMatchObject({ code: "FORBIDDEN" });

@@ -7,6 +7,7 @@ import {
   hitToRawPost,
   inScope,
   isPostUrl,
+  LOOKBACK_DAYS,
   lookbackStart,
   MAX_QUERIES_PER_RUN,
   normalizePhrases,
@@ -70,7 +71,10 @@ export function createWebSearchSource(
       const now = deps.now();
       const since = lookbackStart(config.lookback, now);
       const posts: NonNullable<ReturnType<typeof hitToRawPost>>[] = [];
-      let skipped = 0;
+      const providers = new Set<string>();
+      let total = 0;
+      let outsideScope = 0;
+      let notPost = 0;
 
       for (const [i, query] of queries.entries()) {
         let out: Awaited<ReturnType<SearchRotator["search"]>>;
@@ -92,9 +96,15 @@ export function createWebSearchSource(
           break;
         }
         result.usage?.webSearch.push(...out.usage);
+        providers.add(out.provider);
+        total += out.hits.length;
         for (const hit of out.hits) {
-          if (!inScope(hit.url, scope) || !isPostUrl(config.platform, hit.url)) {
-            skipped += 1;
+          if (!inScope(hit.url, scope)) {
+            outsideScope += 1;
+            continue;
+          }
+          if (!isPostUrl(config.platform, hit.url)) {
+            notPost += 1;
             continue;
           }
           const post = hitToRawPost(hit, config.platform);
@@ -103,9 +113,18 @@ export function createWebSearchSource(
       }
 
       result.posts = dedupePosts(posts);
-      if (skipped > 0) {
+      // One line saying what the search returned, so a run with 0 new posts explains itself.
+      if (providers.size > 0) {
         result.warnings.push(
-          `${skipped} result${skipped === 1 ? "" : "s"} skipped: outside scope or not a post page`,
+          describeResults({
+            providers: [...providers],
+            total,
+            kept: result.posts.length,
+            outsideScope,
+            notPost,
+            scope: scope ? `${scope.host}${scope.pathPrefix}` : null,
+            lookbackDays: LOOKBACK_DAYS[config.lookback],
+          }),
         );
       }
       if ((result.usage?.webSearch.length ?? 0) > 0) {
@@ -114,4 +133,29 @@ export function createWebSearchSource(
       return result;
     },
   };
+}
+
+export function describeResults(r: {
+  providers: readonly string[];
+  total: number;
+  kept: number;
+  outsideScope: number;
+  notPost: number;
+  scope: string | null;
+  lookbackDays: number;
+}): string {
+  const who = r.providers.join("+");
+  const window = `the last ${r.lookbackDays} day${r.lookbackDays === 1 ? "" : "s"}`;
+  if (r.total === 0) {
+    return `${who}: no results in ${window}; try a longer lookback or broader phrases`;
+  }
+  const dropped = [
+    r.outsideScope > 0 ? `${r.outsideScope} outside ${r.scope ?? "scope"}` : null,
+    r.notPost > 0 ? `${r.notPost} not post pages` : null,
+    r.total - r.outsideScope - r.notPost - r.kept > 0
+      ? `${r.total - r.outsideScope - r.notPost - r.kept} duplicates`
+      : null,
+  ].filter((d) => d !== null);
+  const plural = r.total === 1 ? "" : "s";
+  return `${who}: ${r.total} result${plural} in ${window}, ${r.kept} kept${dropped.length > 0 ? ` (${dropped.join(", ")})` : ""}`;
 }

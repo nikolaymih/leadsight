@@ -136,6 +136,9 @@ export function toPipelineRun(report: OrgRunReport): PipelineRunWire {
       sourceId: s.sourceId,
       name: s.name,
       posts: s.posts,
+      // Runs recorded before these fields existed lack them.
+      fetched: s.fetched ?? s.posts,
+      warnings: s.warnings ?? [],
       error: s.error,
     })),
   };

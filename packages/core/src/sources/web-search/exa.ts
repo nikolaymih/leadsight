@@ -19,13 +19,15 @@ export interface ExaClientLike {
   search(query: string, options: Record<string, unknown>): Promise<unknown>;
 }
 
+// Every field but the URL may be missing or null (Exa returns `publishedDate: null` for
+// pages it could not date); a result is only dropped when its URL is unusable.
 const resultSchema = z.object({
   url: z.string().url(),
-  title: z.string().nullable().optional(),
-  publishedDate: z.string().optional(),
-  author: z.string().nullable().optional(),
-  highlights: z.array(z.string()).optional(),
-  text: z.string().optional(),
+  title: z.string().nullish(),
+  publishedDate: z.string().nullish(),
+  author: z.string().nullish(),
+  highlights: z.array(z.string()).nullish(),
+  text: z.string().nullish(),
 });
 
 const responseSchema = z.object({ results: z.array(z.unknown()) });
@@ -93,7 +95,7 @@ function toSearchError(err: unknown): SearchProviderError {
   );
 }
 
-function parseDate(value: string | undefined): Date | undefined {
+function parseDate(value: string | null | undefined): Date | undefined {
   if (!value) return undefined;
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? undefined : d;

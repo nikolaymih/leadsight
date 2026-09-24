@@ -29,7 +29,7 @@ export const DEFAULT_SITE_SCOPE: Record<Platform, string | null> = {
   web: null,
 };
 
-const LOOKBACK_DAYS: Record<SearchLookback, number> = { d1: 1, d3: 3, d7: 7 };
+export const LOOKBACK_DAYS: Record<SearchLookback, number> = { d1: 1, d3: 3, d7: 7 };
 
 /** Trimmed, de-quoted, de-duplicated (case-insensitive), capped at MAX_SEARCH_PHRASES. */
 export function normalizePhrases(phrases: readonly string[]): string[] {

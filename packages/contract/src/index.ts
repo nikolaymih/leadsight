@@ -129,7 +129,17 @@ export const pipelineRunSchema = z.object({
   }),
   errors: z.array(z.string()),
   perSource: z.array(
-    z.object({ sourceId: id, name: z.string(), posts: z.number().int(), error: z.string().nullable() }),
+    z.object({
+      sourceId: id,
+      name: z.string(),
+      /** New posts stored. */
+      posts: z.number().int(),
+      /** Posts the source returned, new or already stored. */
+      fetched: z.number().int(),
+      /** What the source reported, e.g. what a web search returned and why results were dropped. */
+      warnings: z.array(z.string()),
+      error: z.string().nullable(),
+    }),
   ),
 });
 

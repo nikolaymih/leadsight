@@ -70,7 +70,9 @@ describe("web_search source", () => {
     ]);
     expect(result.posts[0]).toMatchObject({ platform: "reddit", bodyIsSnippet: true });
     expect(result.usage).toEqual({ webSearch: [{ provider: "exa", units: 1 }] });
-    expect(result.warnings).toEqual(["2 results skipped: outside scope or not a post page"]);
+    expect(result.warnings).toEqual([
+      "exa: 5 results in the last 1 day, 2 kept (1 outside reddit.com/r/startups, 1 not post pages, 1 duplicates)",
+    ]);
     expect(result.nextCursor).toEqual({
       lastQueryAt: NOW.toISOString(),
       queries: ['"looking for a cto" OR "need a technical cofounder"'],

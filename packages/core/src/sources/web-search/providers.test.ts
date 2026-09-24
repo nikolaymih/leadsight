@@ -78,6 +78,24 @@ describe("Exa provider", () => {
     expect(res.hits[0]?.publishedAt?.toISOString()).toBe("2026-09-23T15:00:00.000Z");
   });
 
+  it("keeps results whose optional fields are null (undated pages, no author)", async () => {
+    const { client } = fakeClient(() => ({
+      results: [
+        {
+          url: "https://www.reddit.com/r/startups/comments/def/need_a_cto/",
+          title: null,
+          publishedDate: null,
+          author: null,
+          highlights: null,
+          text: "Need a CTO for our MVP",
+        },
+      ],
+    }));
+    const res = await createExaProvider({ apiKey: "k", client }).search(REQUEST);
+    expect(res.hits).toHaveLength(1);
+    expect(res.hits[0]).toMatchObject({ snippet: "Need a CTO for our MVP", publishedAt: undefined });
+  });
+
   it("omits the domain filter for the open web", async () => {
     const { client, calls } = fakeClient(() => ({ results: [] }));
     await createExaProvider({ apiKey: "k", client }).search({
@@ -149,6 +167,22 @@ describe("Tavily provider", () => {
     expect(res.hits).toHaveLength(1);
     expect(res.hits[0]).toMatchObject({ snippet: "I have customers lined up and need someone to build" });
     expect(res.hits[0]?.publishedAt?.toISOString()).toBe("2026-09-23T14:00:00.000Z");
+  });
+
+  it("keeps results whose optional fields are null", async () => {
+    const { client } = fakeClient(() => ({
+      results: [
+        {
+          url: "https://www.reddit.com/r/startups/comments/ghi/x/",
+          title: null,
+          content: null,
+          publishedDate: null,
+        },
+      ],
+    }));
+    const res = await createTavilyProvider({ apiKey: "k", client }).search(REQUEST);
+    expect(res.hits).toHaveLength(1);
+    expect(res.hits[0]?.title).toBeUndefined();
   });
 
   it("counts one credit when the response has no usage block", async () => {

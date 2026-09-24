@@ -65,7 +65,8 @@ pages during hydration.
   - `exa.ts` / `tavily.ts`: thin SDK wrappers. The SDK client is injectable (`client?:
     { search(query, options) }`), which is how tests run with fakes — no network. Exa:
     `type: "auto"`, `includeDomains`, `startPublishedDate`, `numResults`, highlights as the
-    snippet; 1 unit per request; errors carry `statusCode`. Tavily: `searchDepth: "basic"`,
+    snippet; 1 unit per request; errors carry `statusCode`. Result schemas accept null/missing for every field but `url`
+    (Exa sends `publishedDate: null` for undated pages); never drop a result silently. Tavily: `searchDepth: "basic"`,
     `includeDomains`, `startDate` (YYYY-MM-DD), `maxResults`, `includeUsage`; units =
     `usage.credits ?? 1`; its SDK throws plain Errors (`"<status> Error: …"` or the API text
     without a status), so `classifyTavilyError` reads the message.
@@ -76,7 +77,9 @@ pages during hydration.
     asked, or throws `WebSearchUnavailableError` listing every provider's failure. Only
     successful calls produce usage.
   - `source.ts`: `createWebSearchSource(deps, { rotator })` — up to `MAX_QUERIES_PER_RUN` (2)
-    packed queries, `RESULTS_PER_QUERY` (20), filters scope + post pages, dedupes, returns
+    packed queries, `RESULTS_PER_QUERY` (20), filters scope + post pages, dedupes, always adds one
+    `describeResults` warning ("exa: 20 results in the last 1 day, 3 kept (…)") that the Runs table
+    shows per source, returns
     `usage.webSearch`. First query failing throws; a later one is a warning. The **pipeline**
     books usage (adapters never touch the DB).
   - Registry: with no provider, `web_search` is a disabled adapter whose run throws

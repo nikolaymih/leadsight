@@ -57,6 +57,9 @@ export interface SourceRunSummary {
   name: string;
   /** New posts inserted by this source in this run. */
   posts: number;
+  /** Posts the adapter returned, new or already stored. */
+  fetched: number;
+  /** What the adapter reported: for web search, what the provider returned and what was dropped. */
   warnings: string[];
   error: string | null;
 }
@@ -196,6 +199,7 @@ async function pollSource(
     sourceId: source.id,
     name: describeSource(source),
     posts: 0,
+    fetched: 0,
     warnings: [],
     error: null,
   };
@@ -211,6 +215,7 @@ async function pollSource(
     const upserted = await upsertPosts(deps.db, source.organizationId, source.id, result.posts);
 
     summary.posts = upserted.inserted;
+    summary.fetched = result.posts.length;
     summary.warnings = result.warnings;
     acc.counts.polled += upserted.inserted;
 
@@ -228,7 +233,12 @@ async function pollSource(
       },
     });
     deps.logger.info(
-      { sourceId: source.id, fetched: result.posts.length, inserted: upserted.inserted },
+      {
+        sourceId: source.id,
+        fetched: result.posts.length,
+        inserted: upserted.inserted,
+        warnings: result.warnings,
+      },
       "source run done",
     );
   } catch (err) {

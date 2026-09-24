@@ -162,16 +162,26 @@ function RunRow({ run, open, onToggle }: { run: PipelineRun; open: boolean; onTo
                   {run.perSource.map((s) => (
                     <li
                       key={s.sourceId}
-                      className="flex items-baseline justify-between gap-3 rounded-[var(--radius)] bg-card px-2 py-1"
+                      className="flex flex-col gap-0.5 rounded-[var(--radius)] bg-card px-2 py-1"
                     >
-                      <span className="min-w-0 truncate font-medium">{s.name}</span>
-                      {s.error ? (
-                        <span className="min-w-0 truncate text-destructive" title={s.error}>
-                          {s.error}
-                        </span>
-                      ) : (
-                        <span className="tabular text-muted-foreground">{s.posts} posts</span>
-                      )}
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 truncate font-medium">{s.name}</span>
+                        {s.error ? (
+                          <span className="min-w-0 truncate text-destructive" title={s.error}>
+                            {s.error}
+                          </span>
+                        ) : (
+                          <span className="tabular shrink-0 text-muted-foreground">
+                            {s.posts} new
+                            {s.fetched > s.posts ? ` · ${s.fetched - s.posts} already stored` : ""}
+                          </span>
+                        )}
+                      </div>
+                      {s.warnings.map((w) => (
+                        <p key={w} className="break-words text-muted-foreground">
+                          {w}
+                        </p>
+                      ))}
                     </li>
                   ))}
                 </ul>

@@ -21,11 +21,12 @@ export interface TavilyClientLike {
   search(query: string, options: Record<string, unknown>): Promise<unknown>;
 }
 
+// Every field but the URL may be missing or null; a result is only dropped when its URL is unusable.
 const resultSchema = z.object({
   url: z.string().url(),
-  title: z.string().optional(),
-  content: z.string().optional(),
-  publishedDate: z.string().optional(),
+  title: z.string().nullish(),
+  content: z.string().nullish(),
+  publishedDate: z.string().nullish(),
 });
 
 const responseSchema = z.object({
@@ -69,8 +70,8 @@ export function createTavilyProvider(opts: TavilyProviderOptions): SearchProvide
         const published = r.data.publishedDate ? new Date(r.data.publishedDate) : undefined;
         hits.push({
           url: r.data.url,
-          title: r.data.title,
-          snippet: r.data.content,
+          title: r.data.title ?? undefined,
+          snippet: r.data.content ?? undefined,
           publishedAt: published && !Number.isNaN(published.getTime()) ? published : undefined,
           raw: item,
         });
