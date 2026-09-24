@@ -313,9 +313,11 @@ Rules:
   config still validates, `run` fails with a clear non-retryable error, so
   the source shows why in `last_error` instead of vanishing.
 
-**Source strategy (2026-09-09).** The Reddit Data API now requires manual
-approval (Responsible Builder Policy), approvals are rare, and the
-unauthenticated `.json`/RSS endpoints return 403; see `docs/reddit-access.md`.
+**Source strategy (2026-09-09; Reddit request denied 2026-09-16).** The Reddit
+Data API requires manual approval (Responsible Builder Policy); our request was
+denied and will not be re-filed, and the unauthenticated `.json`/RSS endpoints
+return 403; see `docs/reddit-access.md`. A `web_search` kind backed by Exa /
+Tavily is the planned primary search source; `google_search` covers until then.
 Discovery on Reddit, LinkedIn and X therefore goes through Google search over
 each platform's public pages, polled actively; Google Alerts RSS stays as the
 free secondary net. reddit.com is never scraped for discovery.

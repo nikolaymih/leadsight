@@ -86,6 +86,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 | Auth                        | better-auth (+ organization, admin plugins); auth screens are hand-built (better-auth-ui rejected for its peer list) |
 | Scheduling                  | node-cron (BullMQ + Redis only if a second worker is needed) |
 | HTTP out                    | native fetch                                       |
+| Web search                  | exa-js, @tavily/core — the `web_search` source; the Reddit Data API request was denied (2026-09-16, `docs/reddit-access.md`), so search over public pages is how Reddit, LinkedIn and X are discovered. Two providers so one outage or quota does not blind the pipeline. |
 | RSS                         | rss-parser                                         |
 | LLM                         | openai SDK pointed at Groq/Gemini OpenAI-compatible endpoints |
 | Email                       | nodemailer                                         |
@@ -114,7 +115,7 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 
 1. ~~`apps/api` skeleton: env.ts, app.ts, server.ts, db plugin, Better Auth plugin, oRPC plugin with a stub router, health route. `docker-compose.yml`. First migration generated and applied.~~ Done — `apps/api/src`, `packages/core/drizzle/0000_init.sql`.
 2. ~~`packages/core/src/errors.ts`, `db/` query module, `test/db.ts` (`withTestDb`) and seed helpers.~~ Done — `packages/core/src/{errors.ts,db/,test/}`, `@leadsight/core/test`.
-3. ~~Sources: interface, registry, `RedditSubredditSource`, `RedditSearchSource`, `RssSource`, hydrators. Fixture-based tests.~~ Done — `packages/core/src/sources/`, `src/test/fake-fetch.ts`, hand-authored fixtures (replace with recordings once Reddit credentials exist).
+3. **web_search source (Exa, Tavily) + RSS source; Reddit API adapters feature-flagged.** In progress — done: `RssSource`, hydrators, registry with feature flags, `google_search` (Google CSE) as the interim search source (2026-09-09). Open: the `web_search` kind backed by `exa-js` / `@tavily/core` with the same query/budget/back-off shape as `google_search`. The Reddit Data API request was denied 2026-09-16; the two `reddit_*` adapters stay disabled unless `REDDIT_CLIENT_ID` is set, and nothing scrapes reddit.com (`docs/reddit-access.md`).
 4. ~~Extractor: providers, budget, few-shot, `LlmExtractor` with fake-provider tests. Prompt v1.~~ Done — `packages/core/src/extractor/`, `PROMPT_VERSION = "2026-09-08.1"`.
 5. ~~Pipeline run + scheduler plugin. Integration test end-to-end with fake adapters.~~ Done — `packages/core/src/pipeline/`, `apps/api/src/plugins/{pipeline,scheduler}.ts`.
 6. ~~oRPC procedures for campaigns, sources, leads, runs (real implementations).~~ Done — `apps/api/src/orpc/{context,error-map,mappers}.ts`, `procedures/*`; only `campaigns.draft` is still a stub.
@@ -125,6 +126,6 @@ Zustand/Redux, tRPC, Prisma, NestJS.
 
 All ten steps are done.
 
-**Source strategy update (2026-09-09).** The Reddit Data API needs manual approval that rarely comes (ticket filed, `docs/reddit-access.md`), so `google_search` (Google Programmable Search over each platform's public pages; `GOOGLE_CSE_KEY`/`GOOGLE_CSE_CX`, 100 free queries/day with a budget + 2 h back-off) is the primary source for Reddit, LinkedIn and X, Google Alerts RSS is the secondary net, and the `reddit_*` kinds are feature-flagged off unless credentials exist. Per-source `activeHours` slows polling overnight. Never scrape reddit.com for discovery.
+**Source strategy update (2026-09-09, denial recorded 2026-09-24).** The Reddit Data API request (ticket 18465893) was denied on 2026-09-16; do not re-apply (`docs/reddit-access.md`). Reddit stays a priority platform, covered by `web_search` (Exa / Tavily, next-steps item 3) plus Google Alerts RSS. Until `web_search` ships, `google_search` (Google Programmable Search over each platform's public pages; `GOOGLE_CSE_KEY`/`GOOGLE_CSE_CX`, 100 free queries/day with a budget + 2 h back-off) is the primary source for Reddit, LinkedIn and X, Google Alerts RSS is the secondary net, and the `reddit_*` kinds are feature-flagged off unless credentials exist. Per-source `activeHours` slows polling overnight. Never scrape reddit.com for discovery.
 
 Next: run the pipeline end-to-end with real credentials (Groq, Google CSE) and replace hand-authored fixtures with recordings; zod 4 / Next 16 / react-table 9 upgrades; a chat notifier when wanted.
