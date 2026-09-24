@@ -99,7 +99,14 @@ export function SourcesView() {
         <BudgetWidget className="self-start" />
       </div>
 
-      {campaign ? <AddSourceDialog campaignId={campaign.id} open={adding} onOpenChange={setAdding} /> : null}
+      {campaign ? (
+        <AddSourceDialog
+          campaignId={campaign.id}
+          keywords={campaign.keywords}
+          open={adding}
+          onOpenChange={setAdding}
+        />
+      ) : null}
     </div>
   );
 }

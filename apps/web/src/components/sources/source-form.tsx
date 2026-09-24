@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { sourceConfigSchema } from "@leadsight/contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -93,10 +93,13 @@ function toConfig(v: FormValues): z.infer<typeof sourceConfigSchema> | { error: 
 
 export function AddSourceDialog({
   campaignId,
+  keywords,
   open,
   onOpenChange,
 }: {
   campaignId: string;
+  /** The campaign's keywords; web search phrases start from these. */
+  keywords: readonly string[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -107,6 +110,11 @@ export function AddSourceDialog({
   const webSearch = useQuery({ ...orpc.integrations.webSearch.queryOptions(), enabled: open });
   const kinds = selectableKinds(webSearch.data?.enabledSourceKinds ?? ["web_search"]);
   const searchDisabled = webSearch.data ? !webSearch.data.configured : false;
+
+  // Each time the dialog opens, phrases start as the campaign's keywords (max 10) to edit down.
+  useEffect(() => {
+    if (open) form.reset({ ...DEFAULTS, phrases: keywords.slice(0, 10) });
+  }, [open, keywords, form]);
 
   const create = useMutation(
     orpc.sources.create.mutationOptions({
@@ -190,13 +198,13 @@ export function AddSourceDialog({
                   <Field
                     label="Phrases"
                     htmlFor="phrases"
-                    hint="Exact things a poster would write, OR-ed into one query. Up to 10."
+                    hint="What to ask the search engine for: things a poster would write, OR-ed into one query (up to 10). Starts as the campaign's keywords; the keywords still filter the results."
                   >
                     <TagInput
                       id="phrases"
                       value={field.value}
                       onChange={field.onChange}
-                      placeholder="looking for a cto, Enter to add"
+                      placeholder="e.g. looking for a cto"
                     />
                   </Field>
                 )}
