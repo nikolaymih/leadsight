@@ -185,7 +185,8 @@ describe("sources", () => {
       app.pipeline.registry = realRegistry;
     }
 
-    const runs = await owner.runs.list({});
+    const { items: runs, nextCursor } = await owner.runs.list({});
+    expect(nextCursor).toBeNull();
     expect(runs[0]?.perSource).toEqual([{ sourceId: source.id, name: "r/startups", posts: 1, error: null }]);
     expect(runs[0]?.counts.polled).toBe(1);
 

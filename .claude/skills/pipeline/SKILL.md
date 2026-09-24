@@ -241,7 +241,7 @@ re-asked once with the issues; a second failure throws a non-retryable `Provider
    few-shot from `listRecentLabels` → `applyRules` + `upsertLead` → notify each notifier
    with new leads at or above `minScoreAlert` (never insufficient/disqualified).
 3. one `pipeline.run` event **per organization touched**, payload = `OrgRunReport`
-   (`id, startedAt, durationMs, counts, errors, perSource`) — the shape `runs.list` returns.
+   (`id, startedAt, durationMs, counts, errors, perSource`) — the shape of each `runs.list` item (cursor-paged, newest first, `listPipelineRuns`).
 
 Error isolation: a failing source, a failing extraction batch, a dropped post
 (`extract.dropped`, written here, not by the extractor) and a failing notifier are all

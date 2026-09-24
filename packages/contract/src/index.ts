@@ -311,8 +311,13 @@ export const contract = {
   runs: {
     list: base
       .route({ method: "GET", path: "/runs" })
-      .input(z.object({ limit: z.number().int().min(1).max(50).default(20) }))
-      .output(z.array(pipelineRunSchema)),
+      .input(
+        z.object({
+          limit: z.number().int().min(1).max(50).default(20),
+          cursor: z.string().optional(),
+        }),
+      )
+      .output(z.object({ items: z.array(pipelineRunSchema), nextCursor: z.string().nullable() })),
 
     budget: base.route({ method: "GET", path: "/runs/budget" }).output(
       z.array(

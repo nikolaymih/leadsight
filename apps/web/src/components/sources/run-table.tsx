@@ -1,8 +1,9 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { Fragment, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -11,15 +12,23 @@ import { orpc } from "@/lib/orpc";
 import type { PipelineRun } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// Recent pipeline runs for the organization; polls every 15 s while the tab is visible so a
-// manual "Run now" shows up. A row expands to that run's per-source breakdown.
+// Pipeline runs for the organization, newest first, PAGE_SIZE per page. Pages are cursor
+// pages of one infinite query; Previous/Next move through the pages already loaded and
+// fetch the next one on demand. The first page polls every 15 s while visible so a manual
+// "Run now" shows up. A row expands to that run's per-source breakdown.
 
 const STEPS = ["polled", "prefiltered", "hydrated", "extracted", "scored", "notified"] as const;
+const PAGE_SIZE = 20;
 
 export function RunTable() {
-  const runs = useQuery({
-    ...orpc.runs.list.queryOptions({ input: { limit: 20 } }),
-    refetchInterval: 15_000,
+  const [pageIndex, setPageIndex] = useState(0);
+  const runs = useInfiniteQuery({
+    ...orpc.runs.list.infiniteOptions({
+      input: (cursor: string | undefined) => ({ limit: PAGE_SIZE, cursor }),
+      initialPageParam: undefined,
+      getNextPageParam: (last) => last.nextCursor ?? undefined,
+    }),
+    refetchInterval: pageIndex === 0 ? 15_000 : false,
   });
   const [open, setOpen] = useState<string | null>(null);
 
@@ -33,7 +42,20 @@ export function RunTable() {
     );
   }
   if (runs.isError) return <EmptyState title="Could not load runs" description={runs.error.message} />;
-  if (runs.data.length === 0) {
+  const pages = runs.data.pages;
+  const current = pages[Math.min(pageIndex, pages.length - 1)]?.items ?? [];
+  const hasNext = pageIndex < pages.length - 1 || runs.hasNextPage;
+
+  async function next() {
+    if (pageIndex >= pages.length - 1) {
+      const result = await runs.fetchNextPage();
+      if (result.isError) return;
+    }
+    setPageIndex((i) => i + 1);
+    setOpen(null);
+  }
+
+  if (pageIndex === 0 && current.length === 0) {
     return (
       <EmptyState
         title="No runs yet"
@@ -43,31 +65,67 @@ export function RunTable() {
   }
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead className="w-6" />
-          <TableHead>Started</TableHead>
-          <TableHead className="text-right">Duration</TableHead>
-          {STEPS.map((s) => (
-            <TableHead key={s} className="text-right capitalize">
-              {s}
-            </TableHead>
+    <div className="flex flex-col gap-2">
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="w-6" />
+            <TableHead>Started</TableHead>
+            <TableHead className="text-right">Duration</TableHead>
+            {STEPS.map((s) => (
+              <TableHead key={s} className="text-right capitalize">
+                {s}
+              </TableHead>
+            ))}
+            <TableHead>Errors</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {current.map((run) => (
+            <RunRow
+              key={run.id}
+              run={run}
+              open={open === run.id}
+              onToggle={() => setOpen(open === run.id ? null : run.id)}
+            />
           ))}
-          <TableHead>Errors</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {runs.data.map((run) => (
-          <RunRow
-            key={run.id}
-            run={run}
-            open={open === run.id}
-            onToggle={() => setOpen(open === run.id ? null : run.id)}
-          />
-        ))}
-      </TableBody>
-    </Table>
+        </TableBody>
+      </Table>
+      <nav
+        className="flex items-center justify-end gap-2 text-xs text-muted-foreground"
+        aria-label="Runs pages"
+      >
+        <span className="tabular">
+          Page {pageIndex + 1}
+          {!hasNext ? ` of ${pageIndex + 1}` : ""}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={pageIndex === 0}
+          onClick={() => {
+            setPageIndex((i) => Math.max(0, i - 1));
+            setOpen(null);
+          }}
+        >
+          <ChevronLeft className="size-3.5" />
+          Newer
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!hasNext || runs.isFetchingNextPage}
+          onClick={() => void next()}
+        >
+          Older
+          {runs.isFetchingNextPage ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+        </Button>
+      </nav>
+    </div>
   );
 }
 
