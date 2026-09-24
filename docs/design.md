@@ -474,7 +474,9 @@ retries/visibility become painful).
 7. **Log** — one `pipeline.run` event per organization touched, carrying
    counts, errors and the per-source breakdown the dashboard shows; plus
    `source.run`, `source.error`, `extract.dropped`, `extract.error` and
-   `extract.budget_exhausted` events as they happen.
+   `extract.budget_exhausted` events as they happen. An idle tick (no due
+   sources, no candidates, no errors — e.g. a campaign with no sources) writes
+   no `pipeline.run` event and logs nothing, so Runs lists only real work.
 
 Budget guards (per API key, so usage is summed across organizations; both
 live in `extractor/budget.ts` and are stored as events):

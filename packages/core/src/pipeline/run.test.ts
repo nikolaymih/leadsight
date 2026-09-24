@@ -339,6 +339,24 @@ describe("runPipeline", () => {
     expect(result.perOrg[TEST_ORG]?.errors).toEqual(["notify email: smtp down"]);
   });
 
+  it("a campaign without sources: nothing is polled, extracted or recorded, and nothing is logged", async () => {
+    const infos: string[] = [];
+    const ex = extractor();
+    const result = await runPipeline(
+      deps({
+        registry: registry({}),
+        extractorFor: () => ex,
+        logger: { ...silentLogger, info: (_obj, msg) => infos.push(msg) },
+      }),
+    );
+
+    expect(result.perOrg).toEqual({});
+    expect(result.totals.polled).toBe(0);
+    expect(ex.calls).toHaveLength(0);
+    expect(await eventsOfType(PIPELINE_EVENTS.run)).toHaveLength(0);
+    expect(infos).toEqual([]);
+  });
+
   it("manual run: polls exactly the given source even when it is not due", async () => {
     const recent = await seedSource(t.db, campaign, {
       kind: "reddit_search",

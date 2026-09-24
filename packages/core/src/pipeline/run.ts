@@ -147,11 +147,13 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineRunResult
     budgetExhausted = await processCampaign(deps, campaign, org(campaign.organizationId), now);
   }
 
-  // 7. One event per organization touched
+  // 7. One event per organization where something happened. A tick with no due sources and
+  // no candidates (e.g. a campaign without sources) records nothing, so Runs only lists real work.
   const durationMs = now().getTime() - startedAt.getTime();
   const perOrg: Record<string, OrgRunReport> = {};
   const totals = zeroCounts();
   for (const [organizationId, acc] of orgs) {
+    if (isIdle(acc)) continue;
     const report: OrgRunReport = {
       id,
       startedAt: startedAt.toISOString(),
@@ -171,8 +173,17 @@ export async function runPipeline(deps: PipelineDeps): Promise<PipelineRunResult
     });
   }
 
-  deps.logger.info({ runId: id, durationMs, totals, organizations: orgs.size }, "pipeline run done");
+  const organizations = Object.keys(perOrg).length;
+  if (organizations > 0) {
+    deps.logger.info({ runId: id, durationMs, totals, organizations }, "pipeline run done");
+  }
   return { id, startedAt, durationMs, perOrg, totals };
+}
+
+function isIdle(acc: OrgAccumulator): boolean {
+  return (
+    acc.perSource.length === 0 && acc.errors.length === 0 && Object.values(acc.counts).every((n) => n === 0)
+  );
 }
 
 async function pollSource(
