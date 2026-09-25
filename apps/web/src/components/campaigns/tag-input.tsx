@@ -5,8 +5,19 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
 // Chips + a text field. Enter or comma adds, Backspace on an empty field removes the last.
+// A pasted multi-line list becomes one tag per line (a single-line <input> would otherwise
+// flatten the newlines into spaces); a single-line paste goes into the field as usual.
 // Text still in the field when the enclosing form submits counts as a tag: a native
 // capture-phase submit listener commits it before react-hook-form's handler reads the values.
+
+/** Splits on newlines and commas; trims, drops empties and duplicates. */
+export function splitTags(text: string): string[] {
+  const parts = text
+    .split(/[\n\r,]+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  return [...new Set(parts)];
+}
 
 export function TagInput({
   value,
@@ -26,11 +37,8 @@ export function TagInput({
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  function commit() {
-    const parts = draft
-      .split(",")
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0 && !value.includes(p));
+  function commit(pasted = "") {
+    const parts = splitTags(`${draft}\n${pasted}`).filter((p) => !value.includes(p));
     if (parts.length > 0) onChange([...value, ...parts]);
     setDraft("");
   }
@@ -79,7 +87,13 @@ export function TagInput({
         placeholder={value.length === 0 ? placeholder : undefined}
         className="min-w-24 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
+        onBlur={() => commit()}
+        onPaste={(e) => {
+          const text = e.clipboardData.getData("text");
+          if (!/[\n\r]/.test(text)) return;
+          e.preventDefault();
+          commit(text);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === ",") {
             e.preventDefault();
