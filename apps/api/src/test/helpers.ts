@@ -66,6 +66,18 @@ export async function signUp(app: App, email = `${randomUUID()}@example.com`): P
   return jar;
 }
 
+export async function signIn(app: App, email: string): Promise<CookieJar> {
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/auth/sign-in/email",
+    payload: { email, password: "correct-horse-battery-staple" },
+  });
+  if (res.statusCode !== 200) throw new Error(`sign-in failed: ${res.statusCode} ${res.body}`);
+  const jar: CookieJar = new Map();
+  absorb(jar, res.headers["set-cookie"]);
+  return jar;
+}
+
 export async function createOrganization(app: App, jar: CookieJar, name = "Test Org"): Promise<string> {
   const slug = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${randomUUID().slice(0, 8)}`;
   const res = await app.inject({

@@ -48,6 +48,9 @@ export const auth = betterAuth({
 - One **organization** = one tenant. Every business row carries `organization_id`.
 - The session's `activeOrganizationId` is the tenant for every request. The oRPC context
   reads it; `requireOrg` middleware rejects requests without one.
+- New sessions default it: `databaseHooks.session.create.before` in `auth.ts` sets
+  `activeOrganizationId` to the user's earliest membership (`member.createdAt`) when unset;
+  no membership leaves it null and the web app routes to onboarding.
 - Roles from the organization plugin: `owner`, `admin`, `member`. v1 permission rules:
   - `member`: read everything in the org, update lead status/assignee/notes.
   - `admin`: plus create/edit campaigns and sources, run sources, manage members.

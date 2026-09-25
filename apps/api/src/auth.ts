@@ -3,6 +3,7 @@ import { type Db, schema } from "@leadsight/core";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin, organization } from "better-auth/plugins";
+import { asc, eq } from "drizzle-orm";
 import type { Env } from "./env.js";
 
 // Better Auth server instance. Tables live in packages/core/src/schema/auth.ts;
@@ -47,6 +48,27 @@ export function createAuth({ env, db, mailer }: { env: Env; db: Db; mailer: Mail
       admin(),
     ],
     session: { cookieCache: { enabled: true, maxAge: 5 * 60 } },
+    databaseHooks: {
+      session: {
+        create: {
+          // A fresh session starts with activeOrganizationId = null, and requireOrg rejects
+          // every oRPC call without one. Default it to the user's earliest membership so a
+          // returning user lands in their org at sign-in; no membership → left null and the
+          // web app routes to onboarding. Better Auth merges the returned data into the row.
+          async before(session) {
+            if (session.activeOrganizationId) return;
+            const [first] = await db
+              .select({ organizationId: schema.member.organizationId })
+              .from(schema.member)
+              .where(eq(schema.member.userId, session.userId))
+              .orderBy(asc(schema.member.createdAt), asc(schema.member.id))
+              .limit(1);
+            if (!first) return;
+            return { data: { ...session, activeOrganizationId: first.organizationId } };
+          },
+        },
+      },
+    },
   });
 }
 
