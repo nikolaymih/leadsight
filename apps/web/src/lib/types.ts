@@ -14,7 +14,7 @@ export type LeadSummary = Outputs["leads"]["list"]["items"][number];
 export type LeadDetail = Outputs["leads"]["get"];
 export type LeadNote = LeadDetail["notes"][number];
 export type Evidence = LeadDetail["evidence"];
-export type PipelineRun = Outputs["runs"]["list"][number];
+export type PipelineRun = Outputs["runs"]["list"]["items"][number];
 export type ProviderBudget = Outputs["runs"]["budget"][number];
 
 export type LeadListInput = Inputs["leads"]["list"];

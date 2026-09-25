@@ -39,8 +39,10 @@ const { data } = useInfiniteQuery(
 
 - Keys are derived from the procedure path and input, so `orpc.leads.key()` invalidates
   every leads query and `orpc.leads.list.key({ input })` a specific one.
-- Inbox uses `infiniteOptions` with the cursor from the contract. Sources, campaigns, runs
-  use `queryOptions`.
+- Inbox uses `infiniteOptions` with the cursor from the contract (scroll loads more). Runs
+  also uses `infiniteOptions` but shows one page at a time with Newer/Older buttons: the
+  loaded pages are kept and "Older" fetches the next cursor page on demand; only the first
+  page polls. Sources and campaigns use `queryOptions`.
 - Server-side initial data: in the page server component, prefetch into a per-request
   QueryClient and wrap the tree in `HydrationBoundary`. Client components then read from
   cache without a loading flash. The infinite key is derived from `input(initialPageParam)`,

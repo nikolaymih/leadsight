@@ -1,6 +1,8 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, type SQL, sql } from "drizzle-orm";
+import { z } from "zod";
 import { type Event, events } from "../schema/index.js";
 import type { DbLike } from "./client.js";
+import { decodeCursor, encodeCursor, keysetAfter } from "./cursor.js";
 
 export interface AppendEventInput {
   organizationId: string;
@@ -69,12 +71,41 @@ export async function lastEventAt(
 }
 
 /** Payloads of the most recent `pipeline.run` events for an organization, newest first. */
-export async function listPipelineRunPayloads(db: DbLike, orgId: string, limit = 20): Promise<unknown[]> {
+export interface PipelineRunPage {
+  /** `pipeline.run` payloads, newest first. */
+  items: unknown[];
+  nextCursor: string | null;
+}
+
+// Keyset on (created_at, id) descending; created_at travels as Postgres text (see leads.ts).
+const runCursorSchema = z.tuple([z.string().min(1), z.string().uuid()]);
+const createdAtText = sql<string>`${events.createdAt}::text`;
+
+export async function listPipelineRuns(
+  db: DbLike,
+  orgId: string,
+  opts: { limit?: number; cursor?: string } = {},
+): Promise<PipelineRunPage> {
+  const limit = opts.limit ?? 20;
+  let after: SQL | undefined;
+  if (opts.cursor) {
+    const [createdAt, id] = decodeCursor(opts.cursor, runCursorSchema);
+    after = keysetAfter([
+      { column: events.createdAt, direction: "desc", value: sql`${createdAt}::timestamptz` },
+      { column: events.id, direction: "desc", value: id },
+    ]);
+  }
   const rows = await db
-    .select({ payload: events.payload })
+    .select({ id: events.id, payload: events.payload, createdAtText })
     .from(events)
-    .where(and(eq(events.organizationId, orgId), eq(events.type, "pipeline.run")))
-    .orderBy(desc(events.createdAt))
-    .limit(limit);
-  return rows.map((r) => r.payload);
+    .where(and(eq(events.organizationId, orgId), eq(events.type, "pipeline.run"), after))
+    .orderBy(desc(events.createdAt), desc(events.id))
+    .limit(limit + 1);
+
+  const page = rows.slice(0, limit);
+  const last = rows.length > limit ? page[page.length - 1] : undefined;
+  return {
+    items: page.map((r) => r.payload),
+    nextCursor: last ? encodeCursor([last.createdAtText, last.id]) : null,
+  };
 }
